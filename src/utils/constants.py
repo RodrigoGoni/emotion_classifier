@@ -4,20 +4,20 @@ Constantes utilizadas en todo el proyecto
 
 # Emociones y sus índices
 EMOTION_CLASSES = {
-    0: "angry",
-    1: "disgust", 
-    2: "fear",
-    3: "happy",
-    4: "neutral",
-    5: "sad",
-    6: "surprise"
+    0: "alegria",
+    1: "disgusto", 
+    2: "enojo",
+    3: "miedo",
+    4: "seriedad",
+    5: "sorpresa",
+    6: "tristeza"
 }
 
 EMOTION_LABELS = list(EMOTION_CLASSES.values())
 NUM_CLASSES = len(EMOTION_CLASSES)
 
 # Configuración de imágenes
-IMAGE_SIZE = 224
+IMAGE_SIZE = 100
 CHANNELS = 3
 
 # Configuración de entrenamiento por defecto
