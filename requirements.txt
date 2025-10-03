@@ -21,3 +21,4 @@ gdown>=4.7.0
 
 # Jupyter
 jupyter>=1.0.0
+Path

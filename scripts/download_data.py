@@ -32,14 +32,17 @@ def download_emotion_dataset(data_dir="data/raw"):
 
 def verify_dataset_structure(data_dir="data/raw"):
     """Verifica la estructura del dataset"""
-    emotions = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
+    # Verificar si existe la estructura dataset_emociones/train
+    train_dir = os.path.join(data_dir, "dataset_emociones", "train")
+    emotions = ['alegria', 'disgusto', 'enojo', 'miedo', 'seriedad', 'sorpresa', 'tristeza']
     
-    if not os.path.exists(data_dir):
-        print(f"Directorio {data_dir} no existe")
+    if not os.path.exists(train_dir):
+        print(f"Directorio {train_dir} no existe")
         return False
     
+    print(f"Verificando estructura en: {train_dir}")
     for emotion in emotions:
-        emotion_path = os.path.join(data_dir, emotion)
+        emotion_path = os.path.join(train_dir, emotion)
         if os.path.exists(emotion_path):
             num_images = len([f for f in os.listdir(emotion_path) 
                             if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
