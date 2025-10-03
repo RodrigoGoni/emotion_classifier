@@ -103,3 +103,40 @@ class EmotionDataset(ImageFolder):
         plt.close()
         
         print(f"Histograma guardado en: {figure_path}")
+        
+    def plot_sample_images(self, num_images=9):
+        """Muestra algunas imágenes de ejemplo del dataset"""
+        if num_images <= 0:
+            print("Número de imágenes debe ser mayor que 0")
+            return
+        
+        num_images = min(num_images, len(self.samples))
+        cols = int(num_images**0.5)
+        rows = (num_images + cols - 1) // cols
+        
+        plt.figure(figsize=(cols * 3, rows * 3))
+        
+        for i in range(num_images):
+            img_path, class_idx = self.samples[i]
+            class_name = self.classes[class_idx]
+            
+            try:
+                with Image.open(img_path) as img:
+                    plt.subplot(rows, cols, i + 1)
+                    plt.imshow(img)
+                    plt.title(class_name)
+                    plt.axis('off')
+            except:
+                continue
+        
+        plt.tight_layout()
+        
+        # Crear directorio results/plots
+        plot_path = Path('results/plots')
+        plot_path.mkdir(parents=True, exist_ok=True)
+        figure_path = plot_path / 'sample_images.png'
+        
+        plt.savefig(figure_path)
+        plt.close()
+        
+        print(f"Imágenes de muestra guardadas en: {figure_path}")
