@@ -1,7 +1,6 @@
 """
 Utilidades para cargar y verificar el dataset de prueba AffectNet
 """
-import os
 from pathlib import Path
 from src.utils.constants import AFFECTNET_TO_YOUR_MODEL, EMOTION_CLASSES
 

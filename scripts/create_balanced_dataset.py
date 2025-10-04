@@ -1,198 +1,151 @@
-"""
-Script para crear un dataset balanceado de emociones faciales con versionado
-"""
+"""Script para crear un dataset balanceado de emociones faciales"""
 import os
 import sys
 import shutil
 import random
+import json
 from pathlib import Path
-from sklearn.model_selection import train_test_split
+from PIL import Image
+from torchvision import transforms
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.data.dataset import EmotionDataset
 from src.utils.config_manager import ConfigManager
 
 
+def _generate_augmented_images(source_images, output_dir, num_needed):
+    """Genera imágenes aumentadas usando transformaciones reales"""
+    if not source_images:
+        return 0
+    
+    augment_transforms = transforms.Compose([
+        transforms.RandomRotation(degrees=15),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+    ])
+    
+    for i in range(num_needed):
+        try:
+            source_img_path = random.choice(source_images)
+            img = Image.open(source_img_path).convert('RGB')
+            augmented_img = augment_transforms(img)
+            
+            aug_filename = f"{source_img_path.stem}_aug_{i:04d}.jpg"
+            augmented_img.save(output_dir / aug_filename, quality=95)
+        except:
+            continue
+    
+    return num_needed
+
+
 def create_balanced_dataset(config_manager: ConfigManager):
     """Crea dataset balanceado usando configuración centralizada"""
-    
-    # Obtener configuración
     data_config = config_manager.get_config('data')
     version_info = config_manager.get_config('version_control')
     
-    print(f"=== CREACIÓN DE DATASET BALANCEADO ===")
-    print(f"Proyecto: {version_info['project_name']} v{version_info['version']}")
+    print(f"Creando dataset balanceado - {version_info['project_name']} v{version_info['version']}")
     
     # Rutas
-    source_dir = data_config['raw_data_path']
+    source_dir = Path(data_config['raw_data_path']) / "train"
     processed_path = Path(data_config['processed_path'])
     train_path = Path(data_config['train_path'])
     val_path = Path(data_config['val_path'])
     
-    # Configuración de balanceado
     target_size = data_config.get('target_samples_per_class', 3000)
-    validation_split = data_config.get('validation_split', 0.2)
     random_seed = data_config.get('random_seed', 42)
-    
-    print(f"Fuente: {source_dir}")
-    print(f"Destino procesado: {processed_path}")
-    print(f"Muestras por clase: {target_size}")
-    print(f"Split validación: {validation_split}")
-    print(f"Semilla aleatoria: {random_seed}")
-    
-    # Verificar fuente
-    source_path = Path(source_dir)
-    if not source_path.exists():
-        print(f" Error: {source_path} no existe")
-        return False
+    random.seed(random_seed)
     
     # Crear directorios
     processed_path.mkdir(parents=True, exist_ok=True)
     train_path.mkdir(parents=True, exist_ok=True)
     val_path.mkdir(parents=True, exist_ok=True)
     
-    # Configurar semilla
-    random.seed(random_seed)
-    
     try:
-        dataset = EmotionDataset(source_dir)
-        print(f" Dataset cargado: {len(dataset.classes)} clases encontradas")
+        dataset = EmotionDataset(str(source_dir))
+        print(f"Dataset: {len(dataset.classes)} clases")
         
-        total_train_images = 0
-        total_val_images = 0
+        total_train = 0
+        total_val = 0
         
         for emotion in dataset.classes:
-            print(f"\nProcesando clase: {emotion}")
+            print(f"Procesando {emotion}...")
             
-            source_emotion_dir = source_path / emotion
+            source_emotion_dir = source_dir / emotion
             train_emotion_dir = train_path / emotion
             val_emotion_dir = val_path / emotion
             
-            # Crear directorios por emoción
             train_emotion_dir.mkdir(exist_ok=True)
             val_emotion_dir.mkdir(exist_ok=True)
             
-            # Obtener todas las imágenes
+            # Obtener imágenes
             image_files = list(source_emotion_dir.glob('*.jpg'))
             current_count = len(image_files)
-            print(f"  Imágenes originales: {current_count}")
             
-            # Generar dataset balanceado
+            if current_count == 0:
+                continue
+            
+            # Generar dataset de entrenamiento balanceado
             if current_count >= target_size:
-                # Si tenemos suficientes, seleccionar aleatoriamente
                 selected = random.sample(image_files, target_size)
-                print(f"  Seleccionadas aleatoriamente: {len(selected)}")
+                for img_file in selected:
+                    shutil.copy2(img_file, train_emotion_dir / img_file.name)
             else:
-                # Si no tenemos suficientes, aplicar oversampling
-                selected = image_files.copy()
+                # Copiar originales
+                for img_file in image_files:
+                    shutil.copy2(img_file, train_emotion_dir / img_file.name)
+                
+                # Generar augmentadas
                 needed = target_size - current_count
-                
-                # Duplicar imágenes para llegar al target
-                for i in range(needed):
-                    source_img = random.choice(image_files)
-                    # Crear nombre único para duplicado
-                    new_name = f"{source_img.stem}_dup_{i:04d}{source_img.suffix}"
-                    selected.append((source_img, new_name))
-                
-                print(f"  Originales: {current_count}, Duplicadas: {needed}, Total: {len(selected)}")
+                _generate_augmented_images(image_files, train_emotion_dir, needed)
             
-            # Dividir en train/val
-            if isinstance(selected[0], tuple):
-                # Caso con duplicados
-                train_set, val_set = train_test_split(
-                    selected, 
-                    test_size=validation_split, 
-                    random_state=random_seed
-                )
-            else:
-                # Caso normal
-                train_set, val_set = train_test_split(
-                    selected, 
-                    test_size=validation_split, 
-                    random_state=random_seed
-                )
+            # Copiar validación
+            validation_dir = Path(data_config['raw_data_path']) / "validation" / emotion
+            val_count = 0
+            if validation_dir.exists():
+                val_images = list(validation_dir.glob('*.jpg'))
+                for img_file in val_images:
+                    shutil.copy2(img_file, val_emotion_dir / img_file.name)
+                val_count = len(val_images)
+                total_val += val_count
             
-            # Copiar archivos de entrenamiento
-            for item in train_set:
-                if isinstance(item, tuple):
-                    source_img, new_name = item
-                    dest_path = train_emotion_dir / new_name
-                else:
-                    source_img = item
-                    dest_path = train_emotion_dir / source_img.name
-                
-                shutil.copy2(source_img, dest_path)
-            
-            # Copiar archivos de validación
-            for item in val_set:
-                if isinstance(item, tuple):
-                    source_img, new_name = item
-                    dest_path = val_emotion_dir / new_name
-                else:
-                    source_img = item
-                    dest_path = val_emotion_dir / source_img.name
-                
-                shutil.copy2(source_img, dest_path)
-            
-            train_count = len(train_set)
-            val_count = len(val_set)
-            total_train_images += train_count
-            total_val_images += val_count
-            
-            print(f"   Train: {train_count}, Val: {val_count}")
+            total_train += target_size
+            print(f"  Train: {target_size}, Val: {val_count}")
         
-        print(f"\n=== RESUMEN ===")
-        print(f" Total imágenes de entrenamiento: {total_train_images}")
-        print(f" Total imágenes de validación: {total_val_images}")
-        print(f" Dataset balanceado creado exitosamente")
-        
-        # Guardar metadatos del dataset
-        dataset_metadata = {
+        # Guardar metadatos
+        metadata = {
             "version": version_info['version'],
             "timestamp": config_manager.timestamp,
-            "source_path": str(source_path),
             "target_samples_per_class": target_size,
-            "validation_split": validation_split,
-            "random_seed": random_seed,
             "classes": dataset.classes,
-            "train_samples": total_train_images,
-            "val_samples": total_val_images,
-            "total_samples": total_train_images + total_val_images
+            "train_samples": total_train,
+            "val_samples": total_val,
         }
         
-        metadata_file = processed_path / "dataset_metadata.json"
-        import json
-        with open(metadata_file, 'w', encoding='utf-8') as f:
-            json.dump(dataset_metadata, f, indent=2, ensure_ascii=False)
+        with open(processed_path / "dataset_metadata.json", 'w') as f:
+            json.dump(metadata, f, indent=2)
         
-        print(f" Metadatos guardados en: {metadata_file}")
-        
+        print(f"Completado: {total_train} train, {total_val} val")
         return True
         
     except Exception as e:
-        print(f" Error durante la creación del dataset: {e}")
+        print(f"Error: {e}")
         return False
 
 
 def main():
     """Función principal"""
-    print("=== CREADOR DE DATASET BALANCEADO ===")
-    
     try:
-        # Inicializar ConfigManager
         config_manager = ConfigManager()
-        print(" ConfigManager inicializado")
-        
-        # Crear dataset balanceado
         success = create_balanced_dataset(config_manager)
         
         if success:
-            print("\n Proceso completado exitosamente")
+            print("Proceso completado")
         else:
-            print("\n Proceso falló")
+            print("Proceso falló")
             
     except Exception as e:
-        print(f" Error: {e}")
+        print(f"Error: {e}")
 
 
 if __name__ == "__main__":

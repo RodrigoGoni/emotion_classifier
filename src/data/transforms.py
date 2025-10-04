@@ -12,8 +12,7 @@ def get_train_transforms():
         transforms.RandomHorizontalFlip(p=0.3),  # Flip reducido - algunas emociones son asimétricas
         transforms.ColorJitter(brightness=0.2, contrast=0.2),  # Variaciones de iluminación
         transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.95, 1.05)),  # Pequeños desplazamientos
-        transforms.ToDtype(torch.float32, scale=True),
-        transforms.ToTensor(),  
+        transforms.ToTensor(),  # Convierte a tensor y escala [0,1]
         transforms.Normalize(mean=[0.485, 0.456, 0.406], 
                            std=[0.229, 0.224, 0.225])
     ])
