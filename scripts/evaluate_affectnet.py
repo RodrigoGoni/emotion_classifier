@@ -1,5 +1,5 @@
 """
-Evaluación completa del modelo con AffectNet integrado con MLOps
+Evaluación completa del modelo con AffectNet integrado con sistema de versionado
 """
 import os
 import sys
@@ -10,6 +10,7 @@ import mlflow
 import mlflow.pytorch
 import matplotlib.pyplot as plt
 import seaborn as sns
+import json
 from pathlib import Path
 from PIL import Image
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
@@ -17,36 +18,59 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.models.cnn_model import CNNModel
-from src.utils.constants import EMOTION_CLASSES, EMOTION_LABELS, NUM_CLASSES, IMAGE_SIZE, CHANNELS
+from src.utils.constants import EMOTION_CLASSES, EMOTION_LABELS, NUM_CLASSES
 from src.data.transforms import get_val_transforms
 from src.utils.test_dataset import load_test_affectnet_dataset, verify_test_dataset
+from src.utils.config_manager import ConfigManager
 
 
 class AffectNetEvaluator:
-    def __init__(self, model_path=None):
+    def __init__(self, config_manager: ConfigManager, model_path=None):
+        self.config_manager = config_manager
+        self.data_config = config_manager.get_config('data')
+        self.inference_config = config_manager.get_config('inference')
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = self.load_model(model_path)
         self.transform = get_val_transforms()
-        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        
+        # Configuración de detección de rostros desde config
+        cascade_path = self.inference_config.get('face_detection', {}).get('cascade_path', 
+                                                'haarcascade_frontalface_default.xml')
+        if not Path(cascade_path).exists():
+            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        
+        self.face_cascade = cv2.CascadeClassifier(cascade_path)
+        self.scale_factor = self.inference_config.get('face_detection', {}).get('scale_factor', 1.1)
+        self.min_neighbors = self.inference_config.get('face_detection', {}).get('min_neighbors', 6)
     
     def load_model(self, model_path=None):
         if model_path is None:
-            models_dir = Path("models/trained")
-            model_files = list(models_dir.glob("best_model_epoch_*.pth"))
+            models_dir = Path(self.config_manager.get_config('output')['models_dir'])
+            model_files = list(models_dir.glob("*.pth"))
+            if not model_files:
+                raise FileNotFoundError("No se encontraron modelos entrenados")
             model_path = max(model_files, key=lambda x: x.stat().st_mtime)
         
         checkpoint = torch.load(model_path, map_location=self.device)
+        
+        # Usar configuración desde config_manager
+        model_config = self.config_manager.get_config('model')
         model = CNNModel(
             num_classes=NUM_CLASSES,
-            input_size=(IMAGE_SIZE, IMAGE_SIZE),
-            num_channels=CHANNELS,
-            dropout_prob=0.5
+            input_size=(self.data_config['image_size'], self.data_config['image_size']),
+            num_channels=self.data_config['channels'],
+            dropout_prob=model_config['dropout_prob']
         )
         model.load_state_dict(checkpoint['model_state_dict'])
         model.to(self.device)
         model.eval()
         
         print(f"Modelo cargado: {model_path}")
+        if 'config_hash' in checkpoint:
+            print(f"Config Hash: {checkpoint['config_hash']}")
+        if 'experiment_id' in checkpoint:
+            print(f"Experiment ID: {checkpoint['experiment_id']}")
+        
         return model, checkpoint, model_path
     
     def predict_image(self, image_array):
@@ -76,7 +100,11 @@ class AffectNetEvaluator:
             return None
         
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6)
+        faces = self.face_cascade.detectMultiScale(
+            gray, 
+            scaleFactor=self.scale_factor, 
+            minNeighbors=self.min_neighbors
+        )
         
         if len(faces) > 0:
             (x, y, w, h) = faces[0]
@@ -252,38 +280,80 @@ class AffectNetEvaluator:
         return plot_path
 
 
-def run_evaluation():
-    # Configurar MLflow
-    mlflow.set_experiment("affectnet_evaluation")
+def run_evaluation_with_config():
+    """Función principal de evaluación con sistema de versionado"""
+    print("=== EVALUACIÓN AFFECTNET CON VERSIONADO ===")
     
-    with mlflow.start_run():
-        # Verificar dataset
+    try:
+        # Inicializar ConfigManager
+        config_manager = ConfigManager()
+        print("ConfigManager inicializado")
+        
+        # Obtener configuraciones
+        version_info = config_manager.get_config('version_control')
+        evaluation_config = config_manager.get_config('evaluation')
+        data_config = config_manager.get_config('data')
+        
+        print(f"Proyecto: {version_info['project_name']} v{version_info['version']}")
+        
+        # Configurar MLflow con versionado
+        experiment_id = config_manager.setup_mlflow_experiment()
+        run_name = f"affectnet_eval_{config_manager.timestamp}"
+        run_id = config_manager.start_mlflow_run(run_name)
+        
+        print(f"Experimento MLflow: {experiment_id}")
+        print(f"Run ID: {run_id}")
+        
+        # Verificar dataset AffectNet
+        affectnet_path = Path(data_config['affectnet_test_path'])
+        if not affectnet_path.exists():
+            print(f"Error: Dataset AffectNet no encontrado en {affectnet_path}")
+            print("Por favor, asegúrate de que el dataset esté disponible")
+            return None
+        
+        print(f"Dataset AffectNet encontrado: {affectnet_path}")
+        
+        # Verificar dataset usando la función existente
         if not verify_test_dataset():
-            print("Error: Dataset de test no encontrado")
-            return
+            print("Error: Verificación del dataset falló")
+            return None
         
         # Cargar datos
         images_data = load_test_affectnet_dataset()
         print(f"Dataset cargado: {len(images_data)} imágenes")
         
-        # Crear evaluador
-        evaluator = AffectNetEvaluator()
-        
-        # Log model info y nombres de clases
-        model_info = evaluator.model[1]  # checkpoint
-        mlflow.log_param("model_path", str(evaluator.model[2]))
-        mlflow.log_param("train_accuracy", model_info.get('val_acc', 0))
+        # Log configuración del dataset
+        mlflow.log_param("affectnet_path", str(affectnet_path))
         mlflow.log_param("dataset_size", len(images_data))
+        
+        # Crear evaluador con configuración
+        evaluator = AffectNetEvaluator(config_manager)
+        
+        # Log información del modelo
+        model_info = evaluator.model[1]  # checkpoint
+        model_path = evaluator.model[2]
+        
+        mlflow.log_param("model_path", str(model_path))
+        mlflow.log_param("model_config_hash", model_info.get('config_hash', 'N/A'))
+        mlflow.log_param("model_experiment_id", model_info.get('experiment_id', 'N/A'))
+        mlflow.log_param("train_accuracy", model_info.get('val_acc', 0))
+        
+        # Log configuración de detección de rostros
+        inference_config = config_manager.get_config('inference')
+        face_config = inference_config.get('face_detection', {})
+        mlflow.log_param("face_scale_factor", face_config.get('scale_factor', 1.1))
+        mlflow.log_param("face_min_neighbors", face_config.get('min_neighbors', 6))
         
         # Log nombres de clases
         for i, emotion in enumerate(EMOTION_LABELS):
             mlflow.log_param(f"class_{i}", emotion)
         
-        # Evaluar
-        print("Evaluando modelo...")
+        # Evaluar modelo
+        print("Evaluando modelo en AffectNet...")
         results = evaluator.evaluate_dataset(images_data)
         
         # Calcular métricas
+        print("Calculando métricas...")
         metrics = evaluator.calculate_metrics(results)
         
         # Log métricas generales a MLflow
@@ -304,66 +374,154 @@ def run_evaluation():
                 mlflow.log_metric(f"recall_{emotion}", recall)
                 mlflow.log_metric(f"f1_score_{emotion}", f1_score)
         
-        # Crear directorio de resultados
-        results_dir = Path("results/evaluation")
+        # Crear directorio de resultados versionado
+        results_dir = config_manager.get_results_dir() / "affectnet_evaluation"
         results_dir.mkdir(parents=True, exist_ok=True)
         
-        # Crear plots
         print("Generando visualizaciones...")
         
-        # Matriz de confusión
+        # Crear plots
         cm_path = evaluator.plot_confusion_matrix(metrics['confusion_matrix'], results_dir)
-        mlflow.log_artifact(str(cm_path))
-        
-        # Ejemplos de resultados
         samples_path = evaluator.plot_sample_results(results, results_dir)
+        
+        # Log artifacts
+        mlflow.log_artifact(str(cm_path))
         mlflow.log_artifact(str(samples_path))
         
-        # Reporte detallado
-        report_path = results_dir / "evaluation_report.txt"
-        with open(report_path, 'w', encoding='utf-8') as f:
-            f.write("EVALUACION AFFECTNET\n")
+        # Crear reporte detallado con versionado
+        report_data = {
+            "timestamp": config_manager.timestamp,
+            "experiment_info": {
+                "experiment_id": experiment_id,
+                "run_id": run_id,
+                "config_hash": getattr(config_manager, '_config_hash', 'N/A')
+            },
+            "model_info": {
+                "model_path": str(model_path),
+                "model_config_hash": model_info.get('config_hash', 'N/A'),
+                "model_experiment_id": model_info.get('experiment_id', 'N/A'),
+                "train_accuracy": model_info.get('val_acc', 'N/A')
+            },
+            "dataset_info": {
+                "affectnet_path": str(affectnet_path),
+                "total_images": metrics['total_images'],
+                "faces_detected": metrics['faces_detected']
+            },
+            "metrics": {
+                "accuracy_original": metrics['original_accuracy'],
+                "accuracy_faces": metrics['face_accuracy'],
+                "detection_rate": metrics['detection_rate'],
+                "classification_report": metrics['classification_report']
+            },
+            "configuration": {
+                "version_control": version_info,
+                "evaluation_config": evaluation_config,
+                "inference_config": inference_config
+            }
+        }
+        
+        # Guardar reporte JSON
+        report_json_path = results_dir / "affectnet_evaluation_report.json"
+        with open(report_json_path, 'w', encoding='utf-8') as f:
+            json.dump(report_data, f, indent=2, ensure_ascii=False, default=str)
+        
+        # Guardar reporte de texto
+        report_txt_path = results_dir / "affectnet_evaluation_report.txt"
+        with open(report_txt_path, 'w', encoding='utf-8') as f:
+            f.write("EVALUACIÓN AFFECTNET CON VERSIONADO\n")
             f.write("=" * 50 + "\n\n")
             
-            f.write("METRICAS GENERALES:\n")
+            f.write("INFORMACIÓN DEL EXPERIMENTO:\n")
+            f.write("-" * 30 + "\n")
+            f.write(f"Timestamp: {config_manager.timestamp}\n")
+            f.write(f"Proyecto: {version_info['project_name']} v{version_info['version']}\n")
+            f.write(f"Experiment ID: {experiment_id}\n")
+            f.write(f"Run ID: {run_id}\n\n")
+            
+            f.write("INFORMACIÓN DEL MODELO:\n")
+            f.write("-" * 25 + "\n")
+            f.write(f"Modelo: {model_path}\n")
+            f.write(f"Config Hash: {model_info.get('config_hash', 'N/A')}\n")
+            f.write(f"Accuracy entrenamiento: {model_info.get('val_acc', 'N/A')}\n\n")
+            
+            f.write("MÉTRICAS GENERALES:\n")
             f.write("-" * 20 + "\n")
             f.write(f"Total imágenes: {metrics['total_images']}\n")
-            f.write(f"Accuracy imagen completa: {metrics['original_accuracy']:.3f}\n")
-            f.write(f"Accuracy rostros detectados: {metrics['face_accuracy']:.3f}\n")
-            f.write(f"Tasa detección rostros: {metrics['detection_rate']:.3f}\n")
+            f.write(f"Accuracy imagen completa: {metrics['original_accuracy']:.4f}\n")
+            f.write(f"Accuracy rostros detectados: {metrics['face_accuracy']:.4f}\n")
+            f.write(f"Tasa detección rostros: {metrics['detection_rate']:.4f}\n")
             f.write(f"Rostros detectados: {metrics['faces_detected']}\n\n")
             
-            f.write("METRICAS POR EMOCION:\n")
+            f.write("MÉTRICAS POR EMOCIÓN:\n")
             f.write("-" * 25 + "\n")
             f.write(f"{'Emoción':<12} {'Precision':<10} {'Recall':<10} {'F1-Score':<10}\n")
             f.write("-" * 45 + "\n")
             
-            for i, emotion in enumerate(EMOTION_LABELS):
+            for emotion in EMOTION_LABELS:
                 if emotion in metrics['classification_report']:
                     report = metrics['classification_report'][emotion]
                     f.write(f"{emotion:<12} {report['precision']:<10.3f} "
                            f"{report['recall']:<10.3f} {report['f1-score']:<10.3f}\n")
             
-            f.write(f"\nMATRIZ DE CONFUSION:\n")
+            f.write(f"\nARCHIVOS GENERADOS:\n")
             f.write("-" * 20 + "\n")
-            f.write("Ver archivo: confusion_matrix.png\n\n")
-            
-            f.write("EJEMPLOS VISUALES:\n")
-            f.write("-" * 18 + "\n")
-            f.write("Ver archivo: sample_results.png\n")
+            f.write(f"Matriz de confusión: {cm_path.name}\n")
+            f.write(f"Ejemplos visuales: {samples_path.name}\n")
+            f.write(f"Reporte JSON: {report_json_path.name}\n")
         
-        # Log reporte a MLflow
-        mlflow.log_artifact(str(report_path))
+        # Log reportes
+        mlflow.log_artifact(str(report_json_path))
+        mlflow.log_artifact(str(report_txt_path))
         
-        print(f"\nResultados:")
-        print(f"Accuracy original: {metrics['original_accuracy']:.3f}")
-        print(f"Accuracy rostros: {metrics['face_accuracy']:.3f}")
-        print(f"Detección rostros: {metrics['detection_rate']:.3f}")
-        print(f"Reporte guardado: {report_path}")
-        print(f"Visualizaciones: {results_dir}")
+        # Guardar resumen del experimento
+        config_manager.save_experiment_summary(
+            {
+                'affectnet_accuracy_original': metrics['original_accuracy'],
+                'affectnet_accuracy_faces': metrics['face_accuracy'],
+                'affectnet_detection_rate': metrics['detection_rate'],
+                'affectnet_total_images': metrics['total_images']
+            },
+            str(model_path),
+            {
+                'evaluation_type': 'affectnet',
+                'dataset_path': str(affectnet_path),
+                'faces_detected': metrics['faces_detected']
+            }
+        )
+        
+        # Finalizar run de MLflow
+        mlflow.end_run()
+        
+        # Mostrar resumen
+        print(f"\n=== RESULTADOS DE EVALUACIÓN AFFECTNET ===")
+        print(f"Accuracy imagen completa: {metrics['original_accuracy']:.4f}")
+        print(f"Accuracy rostros detectados: {metrics['face_accuracy']:.4f}")
+        print(f"Tasa detección rostros: {metrics['detection_rate']:.4f}")
+        print(f"Total imágenes evaluadas: {metrics['total_images']}")
+        print(f"Rostros detectados: {metrics['faces_detected']}")
+        
+        print(f"\nResultados guardados en: {results_dir}")
+        print(f"Reporte detallado: {report_txt_path}")
+        print(f"Datos JSON: {report_json_path}")
+        print(f"Experimento MLflow: {run_id}")
         
         return metrics
+        
+    except Exception as e:
+        print(f"Error durante la evaluación: {e}")
+        if mlflow.active_run():
+            mlflow.end_run(status='FAILED')
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# Mantener función original para compatibilidad
+def run_evaluation():
+    """Función de evaluación original (deprecated)"""
+    print("⚠️  Usando función de evaluación legacy. Se recomienda usar run_evaluation_with_config()")
+    return run_evaluation_with_config()
 
 
 if __name__ == "__main__":
-    run_evaluation()
+    run_evaluation_with_config()
