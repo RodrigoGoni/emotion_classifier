@@ -1,1 +1,180 @@
-# Configuración del modelo y entrenamiento
+# ===================================================
+# CONFIGURACIÓN PRINCIPAL - EMOTION CLASSIFIER
+# ===================================================
+
+# Sistema de versionado
+version_control:
+  project_name: "emotion_classifier"
+  version: "1.0.0"
+  experiment_name: "emotion_classification_v1"
+  description: "Clasificador de emociones faciales con CNN personalizada"
+  author: "Rodrigo Goni"
+  tags:
+    - "deep_learning"
+    - "emotion_recognition"
+    - "computer_vision"
+
+# Configuración de datos
+data:
+  # Rutas de datos
+  raw_data_path: "data/raw/dataset_emociones"
+  processed_path: "data/processed"
+  train_path: "data/processed/train"
+  val_path: "data/processed/val"
+  test_path: "data/test_images"
+  affectnet_test_path: "data/test_affectnet"
+  
+  # Configuración de preprocesamiento
+  image_size: 100
+  channels: 3
+  
+  # Configuración de dataset balanceado
+  balance_dataset: true
+  target_samples_per_class: 3000
+  validation_split: 0.2
+  random_seed: 42
+  
+  # Augmentaciones
+  augmentation:
+    horizontal_flip: 0.5
+    rotation_range: 15
+    brightness_factor: 0.2
+    contrast_factor: 0.2
+    normalize_imagenet: true
+
+# Configuración del modelo
+model:
+  architecture: "CNN_Custom"
+  num_classes: 7
+  dropout_prob: 0.5
+  input_channels: 3
+  
+  # Arquitectura específica
+  conv_layers:
+    - {filters: 64, kernel: 3, pool: 2}
+    - {filters: 128, kernel: 3, pool: 2}
+    - {filters: 256, kernel: 3, pool: 2}
+    - {filters: 512, kernel: 3, pool: 2}
+  
+  fc_layers:
+    - 1024
+    - 512
+
+# Configuración de entrenamiento
+training:
+  # Hiperparámetros principales
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_epochs: 100
+  
+  # Scheduler
+  scheduler:
+    type: "StepLR"
+    step_size: 15
+    gamma: 0.5
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 10
+    min_delta: 0.001
+    restore_best_weights: true
+  
+  # Optimizador
+  optimizer:
+    type: "Adam"
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+  
+  # Criterio de pérdida
+  criterion: "CrossEntropyLoss"
+  
+  # Hardware
+  device: "auto"  # auto, cpu, cuda
+  num_workers: 4
+  pin_memory: true
+
+# Configuración de evaluación
+evaluation:
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1_score"
+    - "confusion_matrix"
+  
+  test_datasets:
+    - "affectnet"
+    - "custom_test"
+  
+  save_predictions: true
+  save_misclassified: true
+
+# MLflow y tracking
+tracking:
+  mlflow_uri: "file:./mlruns"
+  log_model: true
+  log_artifacts: true
+  log_params: true
+  log_metrics: true
+  auto_log: false
+  
+  # Métricas a trackear
+  metrics_to_log:
+    - "train_loss"
+    - "val_loss"
+    - "val_accuracy"
+    - "learning_rate"
+    - "epoch_time"
+
+# Rutas de salida
+output:
+  models_dir: "models/trained"
+  results_dir: "results"
+  plots_dir: "results/plots"
+  logs_dir: "logs"
+  
+  # Naming convention
+  model_name_format: "{architecture}_v{version}_{timestamp}"
+  experiment_name_format: "{project_name}_exp_{timestamp}"
+
+# Configuración de inferencia
+inference:
+  face_detection:
+    cascade_path: "haarcascade_frontalface_default.xml"
+    scale_factor: 1.1
+    min_neighbors: 6
+    min_size: [30, 30]
+  
+  confidence_threshold: 0.7
+  batch_size: 16
+
+# Configuración de logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_handler: true
+  console_handler: true
+
+# Mapeos de clases
+class_mappings:
+  internal_classes:
+    0: "alegria"
+    1: "disgusto"
+    2: "enojo"
+    3: "miedo"
+    4: "seriedad"
+    5: "sorpresa"
+    6: "tristeza"
+  
+  affectnet_mapping:
+    # AffectNet ID -> Nuestro ID
+    3: 0  # Happy -> alegria
+    1: 1  # Disgust -> disgusto
+    0: 2  # Anger -> enojo
+    2: 3  # Fear -> miedo
+    6: 4  # Neutral -> seriedad
+    5: 5  # Surprise -> sorpresa
+    4: 6  # Sad -> tristeza
