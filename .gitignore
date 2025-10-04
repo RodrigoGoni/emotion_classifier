@@ -209,4 +209,4 @@ __marimo__/
 # Dataset directory (only the root-level data folder)
 /data/
 mlruns
-models
+/models/
