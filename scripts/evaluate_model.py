@@ -17,49 +17,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.data.dataset import EmotionDataset
 from src.data.transforms import get_val_transforms
-from src.models.cnn_model import CNNModel
+from src.evaluation.evaluate import Evaluator
 from src.utils.constants import *
 
-
-def load_model(model_path, device):
-    """Cargar modelo entrenado"""
-    checkpoint = torch.load(model_path, map_location=device)
-    
-    model = CNNModel(
-        num_classes=NUM_CLASSES,
-        input_size=(IMAGE_SIZE, IMAGE_SIZE),
-        num_channels=CHANNELS,
-        dropout_prob=0.5
-    )
-    
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model.to(device)
-    model.eval()
-    
-    print(f"Modelo cargado desde: {model_path}")
-    print(f"Época: {checkpoint['epoch']}")
-    print(f"Val Accuracy: {checkpoint['val_acc']:.4f}")
-    
-    return model, checkpoint
-
-
-def evaluate_model(model, data_loader, device):
-    """Evaluar modelo y obtener predicciones"""
-    model.eval()
-    all_predictions = []
-    all_labels = []
-    
-    with torch.no_grad():
-        for images, labels in data_loader:
-            images, labels = images.to(device), labels.to(device)
-            
-            outputs = model(images)
-            _, predictions = torch.max(outputs, 1)
-            
-            all_predictions.extend(predictions.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-    
-    return np.array(all_predictions), np.array(all_labels)
 
 
 def plot_confusion_matrix(y_true, y_pred, class_names, save_path):
@@ -154,15 +114,19 @@ def main():
     
     print(f"Dataset de validación: {len(val_dataset)} muestras")
     
-    # Cargar modelo
-    model, checkpoint = load_model(latest_model, device)
+    # Cargar modelo usando la clase Evaluator
+    model, checkpoint = Evaluator.load_model(latest_model, device)
+    
+    # Crear evaluador
+    evaluator = Evaluator(model, val_loader, device)
     
     # Evaluar modelo
-    print("\nEvaluando modelo...")
-    predictions, true_labels = evaluate_model(model, val_loader, device)
+    print("Evaluando modelo...")
+    results = evaluator.get_detailed_results()
     
-    # Obtener nombres de clases
-    class_names = [EMOTION_CLASSES[i] for i in range(NUM_CLASSES)]
+    predictions = results['predictions']
+    true_labels = results['true_labels']
+    class_names = results['class_names']
     
     # Generar matriz de confusión
     confusion_matrix_path = results_dir / "confusion_matrix.png"
@@ -176,9 +140,13 @@ def main():
     report_path = results_dir / "classification_report.txt"
     generate_classification_report(true_labels, predictions, class_names, report_path)
     
-    # Accuracy general
-    overall_accuracy = accuracy_score(true_labels, predictions)
-    print(f"\nACCURACY GENERAL: {overall_accuracy:.4f}")
+    # Mostrar accuracy general
+    print(f"ACCURACY GENERAL: {results['overall_accuracy']:.4f}")
+    
+    # Mostrar accuracy por clase
+    print("\nAccuracy por clase:")
+    for emotion, acc in results['class_accuracies'].items():
+        print(f"  {emotion}: {acc:.4f}")
     
     print(f"\nResultados guardados en: {results_dir}")
 
