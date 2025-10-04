@@ -12,13 +12,45 @@ import mlflow.pytorch
 from pathlib import Path
 
 # Añadir src al path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from data.dataset import EmotionDataset
-from data.transforms import get_train_transforms, get_val_transforms
-from models.cnn_model import CNNModel
-from training.train import Trainner
-from utils.constants import *
+from src.data.dataset import EmotionDataset
+from src.data.transforms import get_train_transforms, get_val_transforms
+from src.models.cnn_model import CNNModel
+from src.training.train import Trainner
+from src.utils.constants import *
+
+
+class EarlyStopping:
+    """Early stopping para detener el entrenamiento cuando no mejora la validación"""
+    def __init__(self, patience=7, min_delta=0, restore_best_weights=True):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.restore_best_weights = restore_best_weights
+        self.best_loss = None
+        self.counter = 0
+        self.best_weights = None
+        
+    def __call__(self, val_loss, model):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+            self.save_checkpoint(model)
+        elif val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+            self.save_checkpoint(model)
+        else:
+            self.counter += 1
+            
+        if self.counter >= self.patience:
+            if self.restore_best_weights:
+                model.load_state_dict(self.best_weights)
+            return True
+        return False
+    
+    def save_checkpoint(self, model):
+        """Guarda el mejor modelo"""
+        self.best_weights = model.state_dict().copy()
 
 
 def setup_mlflow():
@@ -36,7 +68,6 @@ def train_model(config):
         
         # Setup device
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Usando dispositivo: {device}")
         
         # Datasets
         train_dataset = EmotionDataset(
@@ -61,9 +92,6 @@ def train_model(config):
             shuffle=False,
             num_workers=4
         )
-        
-        print(f"Train samples: {len(train_dataset)}")
-        print(f"Val samples: {len(val_dataset)}")
         
         # Modelo
         model = CNNModel(
@@ -91,6 +119,13 @@ def train_model(config):
         # Trainer
         trainer = Trainner(model, train_loader, val_loader, criterion, optimizer, device)
         
+        # Early stopping
+        early_stopping = EarlyStopping(
+            patience=config['patience'],
+            min_delta=config['min_delta'],
+            restore_best_weights=True
+        )
+        
         # Training loop
         best_val_acc = 0.0
         best_model_path = None
@@ -114,18 +149,13 @@ def train_model(config):
                 'learning_rate': current_lr
             }, step=epoch)
             
-            print(f"Epoch {epoch+1}/{config['num_epochs']}")
-            print(f"  Train Loss: {train_loss:.4f}")
-            print(f"  Val Loss: {val_loss:.4f}")
-            print(f"  Val Acc: {val_acc:.4f}")
-            print(f"  LR: {current_lr:.6f}")
+            print(f"Epoch {epoch+1}: Train={train_loss:.3f}, Val={val_loss:.3f}, Val Acc={val_acc:.3f}")
             
             # Guardar mejor modelo
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
                 best_model_path = f"models/trained/best_model_epoch_{epoch+1}.pth"
                 
-                # Crear directorio si no existe
                 Path(best_model_path).parent.mkdir(parents=True, exist_ok=True)
                 
                 torch.save({
@@ -136,19 +166,20 @@ def train_model(config):
                     'val_loss': val_loss,
                     'config': config
                 }, best_model_path)
-                
-                print(f"  Nuevo mejor modelo guardado: {val_acc:.4f}")
+            
+            # Early stopping check
+            if early_stopping(val_loss, model):
+                print(f"Early stopping at epoch {epoch+1}")
+                break
         
         # Log del mejor modelo
         mlflow.log_metric('best_val_accuracy', best_val_acc)
         
-        # Log del modelo en MLflow
         if best_model_path and os.path.exists(best_model_path):
             mlflow.pytorch.log_model(model, "model")
             mlflow.log_artifact(best_model_path, "best_model")
         
-        print(f"\nEntrenamiento completado")
-        print(f"Mejor accuracy de validación: {best_val_acc:.4f}")
+        print(f"Entrenamiento completado. Mejor accuracy: {best_val_acc:.4f}")
         
         return model, best_val_acc
 
@@ -164,26 +195,26 @@ def main():
         'batch_size': 32,
         'learning_rate': 0.001,
         'weight_decay': 1e-4,
-        'num_epochs': 50,
+        'num_epochs': 100,
         'dropout_prob': 0.5,
         'step_size': 15,
         'gamma': 0.5,
+        'patience': 10,
+        'min_delta': 0.001,
         'model_type': 'CNN_Custom'
     }
     
     # Verificar que existen los datos
     if not Path(config['train_data_path']).exists():
         print(f"Error: {config['train_data_path']} no existe")
-        print("Ejecuta primero: python scripts/create_balanced_dataset.py")
         return
     
     print("Iniciando entrenamiento...")
-    print(f"Configuración: {config}")
     
     # Entrenar modelo
     model, best_acc = train_model(config)
     
-    print(f"\nEntrenamiento finalizado con accuracy: {best_acc:.4f}")
+    print(f"Finalizado. Accuracy: {best_acc:.4f}")
 
 
 if __name__ == "__main__":

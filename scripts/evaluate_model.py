@@ -13,12 +13,12 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from pathlib import Path
 
 # Añadir src al path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from data.dataset import EmotionDataset
-from data.transforms import get_val_transforms
-from models.cnn_model import CNNModel
-from utils.constants import *
+from src.data.dataset import EmotionDataset
+from src.data.transforms import get_val_transforms
+from src.models.cnn_model import CNNModel
+from src.utils.constants import *
 
 
 def load_model(model_path, device):

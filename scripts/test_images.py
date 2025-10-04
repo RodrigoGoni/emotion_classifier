@@ -1,5 +1,5 @@
 """
-Script para probar imágenes nuevas
+Script actualizado para probar imágenes individuales con análisis detallado
 """
 import os
 import sys
@@ -10,11 +10,11 @@ from PIL import Image
 from pathlib import Path
 
 # Añadir src al path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from data.transforms import get_val_transforms
-from models.cnn_model import CNNModel
-from utils.constants import *
+from src.data.transforms import get_val_transforms
+from src.models.cnn_model import CNNModel
+from src.utils.constants import EMOTION_CLASSES, NUM_CLASSES, IMAGE_SIZE, CHANNELS
 
 
 def load_best_model(device):
@@ -45,345 +45,352 @@ def load_best_model(device):
     return model
 
 
-def preprocess_image(image_path, target_size=(100, 100)):
-    """Preprocesar imagen para el modelo"""
+def predict_single_image(model, image_path, transform, device):
+    """Predecir emoción para una sola imagen con análisis detallado"""
     try:
-        # Cargar imagen
-        image = Image.open(image_path).convert('RGB')
-        
-        # Redimensionar
-        image = image.resize(target_size)
+        # Cargar imagen original
+        original_image = Image.open(image_path).convert('RGB')
         
         # Aplicar transformaciones
-        transform = get_val_transforms()
-        image_tensor = transform(image).unsqueeze(0)
+        image_tensor = transform(original_image).unsqueeze(0).to(device)
         
-        return image_tensor, image
+        # Predecir
+        with torch.no_grad():
+            outputs = model(image_tensor)
+            probabilities = torch.nn.functional.softmax(outputs, dim=1)
+            predicted_class = torch.argmax(probabilities, 1).item()
+            confidence = probabilities[0][predicted_class].item()
+            all_scores = probabilities.cpu().numpy()[0]
+        
+        predicted_emotion = EMOTION_CLASSES[predicted_class]
+        
+        return {
+            'original_image': original_image,
+            'processed_tensor': image_tensor,
+            'predicted_class': predicted_class,
+            'predicted_emotion': predicted_emotion,
+            'confidence': confidence,
+            'all_scores': all_scores,
+            'success': True
+        }
+        
     except Exception as e:
-        print(f"Error al procesar {image_path}: {e}")
-        return None, None
+        print(f"Error procesando {image_path}: {e}")
+        return {'success': False, 'error': str(e)}
 
 
-def predict_emotion(model, image_tensor, device):
-    """Predecir emoción de una imagen"""
-    model.eval()
+def create_detailed_plot(result, image_path, save_path=None):
+    """Crear plot detallado con imagen original, preprocesada, scores y análisis"""
+    if not result['success']:
+        print(f"No se puede crear plot: {result['error']}")
+        return
     
-    with torch.no_grad():
-        image_tensor = image_tensor.to(device)
-        outputs = model(image_tensor)
-        
-        # Obtener probabilidades
-        probabilities = torch.nn.functional.softmax(outputs, dim=1)
-        confidence, predicted = torch.max(probabilities, 1)
-        
-        return predicted.item(), confidence.item(), probabilities.cpu().numpy()[0]
-
-
-def plot_prediction_results(image, predicted_emotion, confidence, probabilities, save_path=None):
-    """Visualizar resultados de predicción"""
-    emotion_names = [EMOTION_CLASSES[i] for i in range(NUM_CLASSES)]
+    # Preparar imagen preprocesada para visualización
+    preprocessed_display = result['processed_tensor'].squeeze(0).cpu()
+    # Desnormalizar
+    mean = torch.tensor([0.485, 0.456, 0.406])
+    std = torch.tensor([0.229, 0.224, 0.225])
+    preprocessed_display = preprocessed_display * std.view(3, 1, 1) + mean.view(3, 1, 1)
+    preprocessed_display = torch.clamp(preprocessed_display, 0, 1)
+    preprocessed_display = preprocessed_display.permute(1, 2, 0).numpy()
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    # Crear figura
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
     
-    # Mostrar imagen
-    ax1.imshow(image)
-    ax1.set_title(f'Predicción: {emotion_names[predicted_emotion]}\nConfianza: {confidence:.3f}')
+    # 1. Imagen original
+    ax1.imshow(result['original_image'])
+    ax1.set_title(f'Imagen Original\n{Path(image_path).name}', fontsize=12, fontweight='bold')
     ax1.axis('off')
     
-    # Mostrar probabilidades
-    colors = plt.cm.viridis(np.linspace(0, 1, len(emotion_names)))
-    bars = ax2.bar(emotion_names, probabilities, color=colors)
-    ax2.set_title('Probabilidades por Emoción')
-    ax2.set_ylabel('Probabilidad')
-    ax2.set_ylim(0, 1)
-    plt.setp(ax2.get_xticklabels(), rotation=45, ha='right')
+    # 2. Imagen preprocesada
+    ax2.imshow(preprocessed_display)
+    ax2.set_title(f'Imagen Preprocesada\n{IMAGE_SIZE}x{IMAGE_SIZE}, Normalizada', fontsize=12, fontweight='bold')
+    ax2.axis('off')
     
-    # Resaltar la predicción
-    bars[predicted_emotion].set_color('red')
+    # 3. Scores por clase
+    emotion_names = [EMOTION_CLASSES[i] for i in range(NUM_CLASSES)]
+    scores = result['all_scores']
     
-    # Añadir valores en las barras
-    for bar, prob in zip(bars, probabilities):
-        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                f'{prob:.3f}', ha='center', va='bottom', fontsize=8)
+    colors = ['red' if i == result['predicted_class'] else 'lightblue' for i in range(NUM_CLASSES)]
+    bars = ax3.bar(emotion_names, scores, color=colors, alpha=0.7)
+    ax3.set_title('Scores por Clase', fontsize=12, fontweight='bold')
+    ax3.set_ylabel('Probabilidad')
+    ax3.set_ylim(0, 1)
+    ax3.tick_params(axis='x', rotation=45)
+    
+    # Resaltar clase ganadora
+    bars[result['predicted_class']].set_color('red')
+    bars[result['predicted_class']].set_alpha(1.0)
+    
+    # Añadir valores en barras
+    for bar, score in zip(bars, scores):
+        ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                f'{score:.3f}', ha='center', va='bottom', fontsize=8)
+    
+    # 4. Análisis detallado
+    ax4.axis('off')
+    
+    # Top 3 emociones
+    top_3_indices = np.argsort(scores)[::-1][:3]
+    
+    analysis_text = f"""
+PREDICCIÓN PRINCIPAL:
+    {result['predicted_emotion']}
+    Confianza: {result['confidence']:.3f}
+
+CLASE GANADORA:
+    Clase {result['predicted_class']}
+    Score: {scores[result['predicted_class']]:.3f}
+
+TOP 3 PREDICCIONES:
+"""
+    
+    for i, idx in enumerate(top_3_indices):
+        analysis_text += f"    {i+1}. {emotion_names[idx]}: {scores[idx]:.3f}\n"
+    
+    analysis_text += f"""
+INFORMACIÓN TÉCNICA:
+    Modelo: CNNModel
+    Input: {IMAGE_SIZE}x{IMAGE_SIZE}x{CHANNELS}
+    Clases: {NUM_CLASSES}
+    Transformaciones: Resize + Normalización
+"""
+    
+    ax4.text(0.1, 0.9, analysis_text, transform=ax4.transAxes, fontsize=11,
+            verticalalignment='top', fontfamily='monospace',
+            bbox=dict(boxstyle="round,pad=0.5", facecolor='lightgray', alpha=0.8))
+    
+    # Título principal
+    main_title = f'Predicción: {result["predicted_emotion"]} (Confianza: {result["confidence"]:.3f})'
+    fig.suptitle(main_title, fontsize=16, fontweight='bold')
     
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, bbox_inches='tight', dpi=150)
-        print(f"Resultado guardado: {save_path}")
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Plot guardado: {save_path}")
+    else:
+        plt.show()
     
-    plt.show()
+    plt.close()
 
 
-def test_single_image(image_path, model, device, save_results=True):
-    """Probar una sola imagen"""
-    print(f"\nProbando imagen: {image_path}")
+def test_single_image_interactive():
+    """Probar una imagen individual de forma interactiva"""
+    print("\n=== PREDICCIÓN DE IMAGEN INDIVIDUAL ===")
     
-    # Preprocesar imagen
-    image_tensor, original_image = preprocess_image(image_path)
+    image_path = input("Ingresa la ruta de la imagen: ").strip()
     
-    if image_tensor is None:
+    if not os.path.exists(image_path):
+        print(f"Error: La imagen {image_path} no existe")
         return
+    
+    # Setup
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = load_best_model(device)
+    transform = get_val_transforms()
     
     # Predecir
-    predicted_class, confidence, probabilities = predict_emotion(model, image_tensor, device)
-    emotion_name = EMOTION_CLASSES[predicted_class]
+    result = predict_single_image(model, image_path, transform, device)
     
-    print(f"Emoción predicha: {emotion_name}")
-    print(f"Confianza: {confidence:.4f}")
-    
-    # Guardar resultados si se solicita
-    if save_results:
-        results_dir = Path("results/predictions")
-        results_dir.mkdir(parents=True, exist_ok=True)
-        
-        image_name = Path(image_path).stem
-        save_path = results_dir / f"{image_name}_prediction.png"
-        
-        plot_prediction_results(original_image, predicted_class, confidence, 
-                              probabilities, save_path)
-    else:
-        plot_prediction_results(original_image, predicted_class, confidence, probabilities)
-
-
-def test_directory(images_dir, model, device, max_images=10):
-    """Probar múltiples imágenes de un directorio"""
-    images_dir = Path(images_dir)
-    
-    if not images_dir.exists():
-        print(f"Error: {images_dir} no existe")
+    if not result['success']:
         return
     
-    # Extensiones de imagen soportadas
-    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
+    # Mostrar resultados
+    print(f"\nRESULTADOS:")
+    print(f"Emoción predicha: {result['predicted_emotion']}")
+    print(f"Confianza: {result['confidence']:.4f}")
+    print(f"Clase: {result['predicted_class']}")
+    
+    # Mostrar top 3
+    print(f"\nTop 3 predicciones:")
+    top_3_indices = np.argsort(result['all_scores'])[::-1][:3]
+    for i, idx in enumerate(top_3_indices):
+        emotion = EMOTION_CLASSES[idx]
+        score = result['all_scores'][idx]
+        print(f"  {i+1}. {emotion}: {score:.4f}")
+    
+    # Preguntar si guardar plot
+    save_option = input("\n¿Guardar plot detallado? (s/n): ").strip().lower()
+    if save_option == 's':
+        results_dir = Path("results/single_predictions")
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        filename = f"{Path(image_path).stem}_{result['predicted_emotion']}.png"
+        save_path = results_dir / filename
+        
+        create_detailed_plot(result, image_path, save_path)
+    else:
+        create_detailed_plot(result, image_path)
+
+
+def test_directory_images():
+    """Probar todas las imágenes de un directorio"""
+    print("\n=== PREDICCIÓN DE DIRECTORIO ===")
+    
+    directory_path = input("Ingresa la ruta del directorio: ").strip()
+    
+    if not os.path.exists(directory_path):
+        print(f"Error: El directorio {directory_path} no existe")
+        return
+    
+    # Buscar imágenes
+    image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
     image_files = []
     
     for ext in image_extensions:
-        image_files.extend(list(images_dir.glob(f'*{ext}')))
-        image_files.extend(list(images_dir.glob(f'*{ext.upper()}')))
+        image_files.extend(Path(directory_path).glob(f"*{ext}"))
+        image_files.extend(Path(directory_path).glob(f"*{ext.upper()}"))
     
     if not image_files:
-        print(f"No se encontraron imágenes en {images_dir}")
+        print("No se encontraron imágenes en el directorio")
         return
     
-    # Limitar número de imágenes
-    image_files = image_files[:max_images]
+    print(f"Encontradas {len(image_files)} imágenes")
     
-    print(f"Probando {len(image_files)} imágenes...")
+    # Setup
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = load_best_model(device)
+    transform = get_val_transforms()
     
-    results = []
-    emotion_names = [EMOTION_CLASSES[i] for i in range(NUM_CLASSES)]
-    
-    # Crear directorio para resultados
+    # Crear directorio de resultados
     results_dir = Path("results/batch_predictions")
     results_dir.mkdir(parents=True, exist_ok=True)
     
-    for image_file in image_files:
-        image_tensor, original_image = preprocess_image(image_file)
-        if image_tensor is not None:
-            predicted_class, confidence, probabilities = predict_emotion(model, image_tensor, device)
-            emotion_name = EMOTION_CLASSES[predicted_class]
-            
-            result = {
-                'file': image_file.name,
-                'emotion': emotion_name,
-                'confidence': confidence,
-                'probabilities': probabilities
-            }
-            results.append(result)
-            
-            print(f"{image_file.name}: {emotion_name} ({confidence:.4f})")
-            
-            # Guardar predicción individual
-            save_path = results_dir / f"{image_file.stem}_prediction.png"
-            plot_prediction_results(original_image, predicted_class, confidence, 
-                                  probabilities, save_path)
+    # Procesar imágenes
+    results = []
     
-    # Guardar resumen de resultados
-    save_batch_summary(results, results_dir, images_dir.name)
+    for i, image_path in enumerate(image_files, 1):
+        print(f"\nProcesando {i}/{len(image_files)}: {image_path.name}")
+        
+        result = predict_single_image(model, image_path, transform, device)
+        
+        if result['success']:
+            print(f"  Predicción: {result['predicted_emotion']} (confianza: {result['confidence']:.3f})")
+            
+            # Guardar plot individual
+            filename = f"{image_path.stem}_{result['predicted_emotion']}.png"
+            save_path = results_dir / filename
+            create_detailed_plot(result, image_path, save_path)
+            
+            results.append({
+                'file': image_path.name,
+                'emotion': result['predicted_emotion'],
+                'confidence': result['confidence'],
+                'class': result['predicted_class']
+            })
     
-    return results
+    # Crear resumen
+    if results:
+        summary_path = results_dir / "batch_summary.txt"
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            f.write("RESUMEN DE PREDICCIONES EN LOTE\n")
+            f.write("=" * 40 + "\n\n")
+            f.write(f"Total de imágenes procesadas: {len(results)}\n\n")
+            
+            # Contar por emoción
+            emotion_counts = {}
+            for result in results:
+                emotion = result['emotion']
+                emotion_counts[emotion] = emotion_counts.get(emotion, 0) + 1
+            
+            f.write("DISTRIBUCIÓN DE EMOCIONES:\n")
+            f.write("-" * 25 + "\n")
+            for emotion, count in sorted(emotion_counts.items()):
+                percentage = (count / len(results)) * 100
+                f.write(f"{emotion}: {count} ({percentage:.1f}%)\n")
+            
+            f.write(f"\nDETALLE POR IMAGEN:\n")
+            f.write("-" * 20 + "\n")
+            for result in results:
+                f.write(f"{result['file']}: {result['emotion']} ({result['confidence']:.3f})\n")
+        
+        print(f"\nResumen guardado: {summary_path}")
+        print(f"Plots individuales en: {results_dir}")
 
 
-def save_batch_summary(results, results_dir, folder_name):
-    """Guardar resumen de predicciones en lote"""
-    if not results:
+def show_sample_dataset_images():
+    """Mostrar imágenes de ejemplo del dataset de entrenamiento"""
+    print("\n=== IMÁGENES DE EJEMPLO DEL DATASET ===")
+    
+    dataset_path = Path("data/processed/train")
+    if not dataset_path.exists():
+        print("Dataset de entrenamiento no encontrado")
+        print("Ejecuta primero: python scripts/create_balanced_dataset.py")
         return
     
-    # Crear resumen de texto
-    summary_path = results_dir / f"{folder_name}_summary.txt"
-    with open(summary_path, 'w') as f:
-        f.write(f"RESUMEN DE PREDICCIONES - {folder_name}\n")
-        f.write("=" * 50 + "\n\n")
-        f.write(f"Total de imágenes: {len(results)}\n\n")
-        
-        # Estadísticas por emoción
-        emotion_counts = {}
-        confidence_by_emotion = {}
-        
-        for result in results:
-            emotion = result['emotion']
-            confidence = result['confidence']
-            
-            if emotion not in emotion_counts:
-                emotion_counts[emotion] = 0
-                confidence_by_emotion[emotion] = []
-            
-            emotion_counts[emotion] += 1
-            confidence_by_emotion[emotion].append(confidence)
-        
-        f.write("DISTRIBUCIÓN DE PREDICCIONES:\n")
-        f.write("-" * 30 + "\n")
-        for emotion, count in emotion_counts.items():
-            percentage = (count / len(results)) * 100
-            avg_confidence = np.mean(confidence_by_emotion[emotion])
-            f.write(f"{emotion}: {count} ({percentage:.1f}%) - Confianza promedio: {avg_confidence:.3f}\n")
-        
-        f.write("\nDETALLE POR IMAGEN:\n")
-        f.write("-" * 30 + "\n")
-        for result in results:
-            f.write(f"{result['file']}: {result['emotion']} ({result['confidence']:.4f})\n")
+    # Setup
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = load_best_model(device)
+    transform = get_val_transforms()
     
-    # Crear gráfico de resumen
-    plot_batch_summary(results, results_dir, folder_name)
+    # Crear directorio de resultados
+    results_dir = Path("results/dataset_samples")
+    results_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"Resumen guardado: {summary_path}")
-
-
-def plot_batch_summary(results, results_dir, folder_name):
-    """Crear gráficos de resumen de predicciones en lote"""
+    # Tomar una imagen de cada emoción
     emotion_names = [EMOTION_CLASSES[i] for i in range(NUM_CLASSES)]
     
-    # Contar predicciones por emoción
-    emotion_counts = {emotion: 0 for emotion in emotion_names}
-    confidences = []
+    for emotion in emotion_names:
+        emotion_dir = dataset_path / emotion
+        if emotion_dir.exists():
+            image_files = list(emotion_dir.glob("*.jpg"))
+            if image_files:
+                # Tomar la primera imagen
+                image_path = image_files[0]
+                print(f"\nProcesando ejemplo de {emotion}: {image_path.name}")
+                
+                result = predict_single_image(model, image_path, transform, device)
+                
+                if result['success']:
+                    print(f"  Predicción: {result['predicted_emotion']} (confianza: {result['confidence']:.3f})")
+                    
+                    # Crear plot
+                    filename = f"sample_{emotion}_{result['predicted_emotion']}.png"
+                    save_path = results_dir / filename
+                    create_detailed_plot(result, image_path, save_path)
     
-    for result in results:
-        emotion_counts[result['emotion']] += 1
-        confidences.append(result['confidence'])
-    
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-    
-    # 1. Distribución de predicciones
-    emotions = list(emotion_counts.keys())
-    counts = list(emotion_counts.values())
-    
-    bars1 = ax1.bar(emotions, counts, color='skyblue')
-    ax1.set_title(f'Distribución de Predicciones - {folder_name}')
-    ax1.set_xlabel('Emociones')
-    ax1.set_ylabel('Cantidad')
-    ax1.tick_params(axis='x', rotation=45)
-    
-    for bar, count in zip(bars1, counts):
-        if count > 0:
-            ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
-                    str(count), ha='center', va='bottom')
-    
-    # 2. Distribución de confianza
-    ax2.hist(confidences, bins=10, color='lightgreen', alpha=0.7, edgecolor='black')
-    ax2.set_title('Distribución de Confianza')
-    ax2.set_xlabel('Confianza')
-    ax2.set_ylabel('Frecuencia')
-    ax2.axvline(np.mean(confidences), color='red', linestyle='--', 
-                label=f'Media: {np.mean(confidences):.3f}')
-    ax2.legend()
-    
-    # 3. Confianza promedio por emoción
-    emotion_confidences = {}
-    for result in results:
-        emotion = result['emotion']
-        if emotion not in emotion_confidences:
-            emotion_confidences[emotion] = []
-        emotion_confidences[emotion].append(result['confidence'])
-    
-    avg_confidences = [np.mean(emotion_confidences.get(emotion, [0])) 
-                      for emotion in emotions]
-    
-    bars3 = ax3.bar(emotions, avg_confidences, color='lightcoral')
-    ax3.set_title('Confianza Promedio por Emoción')
-    ax3.set_xlabel('Emociones')
-    ax3.set_ylabel('Confianza Promedio')
-    ax3.tick_params(axis='x', rotation=45)
-    ax3.set_ylim(0, 1)
-    
-    for bar, conf in zip(bars3, avg_confidences):
-        if conf > 0:
-            ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                    f'{conf:.3f}', ha='center', va='bottom')
-    
-    # 4. Top imágenes con mayor confianza
-    top_results = sorted(results, key=lambda x: x['confidence'], reverse=True)[:10]
-    top_files = [r['file'][:15] + '...' if len(r['file']) > 15 else r['file'] 
-                for r in top_results]
-    top_confidences = [r['confidence'] for r in top_results]
-    
-    bars4 = ax4.barh(range(len(top_files)), top_confidences, color='gold')
-    ax4.set_title('Top 10 Predicciones por Confianza')
-    ax4.set_xlabel('Confianza')
-    ax4.set_yticks(range(len(top_files)))
-    ax4.set_yticklabels(top_files)
-    ax4.set_xlim(0, 1)
-    
-    plt.tight_layout()
-    
-    summary_plot_path = results_dir / f"{folder_name}_summary.png"
-    plt.savefig(summary_plot_path, bbox_inches='tight', dpi=150)
-    plt.close()
-    
-    print(f"Gráfico de resumen guardado: {summary_plot_path}")
+    print(f"\nEjemplos guardados en: {results_dir}")
 
 
 def main():
-    """Función principal"""
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Usando dispositivo: {device}")
+    """Función principal con menú interactivo"""
+    print("=== PREDICTOR DE EMOCIONES ACTUALIZADO ===")
     
-    # Cargar modelo
-    try:
-        model = load_best_model(device)
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
+    # Verificar que hay modelos entrenados
+    models_dir = Path("models/trained")
+    if not models_dir.exists() or not list(models_dir.glob("*.pth")):
+        print("Error: No se encontraron modelos entrenados")
         print("Ejecuta primero: python scripts/train_model.py")
         return
     
-    # Opciones de uso
-    print("\nOpciones de uso:")
-    print("1. Probar una imagen específica")
-    print("2. Probar imágenes de un directorio")
-    print("3. Usar imágenes de ejemplo del dataset")
-    
-    choice = input("\nSelecciona una opción (1-3): ").strip()
-    
-    if choice == "1":
-        image_path = input("Ingresa la ruta de la imagen: ").strip()
-        if os.path.exists(image_path):
-            test_single_image(image_path, model, device)
-        else:
-            print(f"Error: {image_path} no existe")
-    
-    elif choice == "2":
-        images_dir = input("Ingresa la ruta del directorio: ").strip()
-        max_images = int(input("Número máximo de imágenes a probar (default 10): ") or "10")
-        test_directory(images_dir, model, device, max_images)
-    
-    elif choice == "3":
-        # Usar imágenes de ejemplo del dataset de validación
-        val_dir = Path("data/processed/val")
-        if val_dir.exists():
-            emotions = [d.name for d in val_dir.iterdir() if d.is_dir()]
-            print(f"Emociones disponibles: {emotions}")
+    while True:
+        print("\nOpciones disponibles:")
+        print("1. Predecir imagen individual")
+        print("2. Predecir imágenes de un directorio")
+        print("3. Mostrar ejemplos del dataset de entrenamiento")
+        print("4. Salir")
+        
+        try:
+            option = input("\nSelecciona una opción (1-4): ").strip()
             
-            selected_emotion = input("Selecciona una emoción: ").strip()
-            if selected_emotion in emotions:
-                emotion_dir = val_dir / selected_emotion
-                test_directory(emotion_dir, model, device, max_images=5)
+            if option == '1':
+                test_single_image_interactive()
+            elif option == '2':
+                test_directory_images()
+            elif option == '3':
+                show_sample_dataset_images()
+            elif option == '4':
+                print("¡Hasta luego!")
+                break
             else:
-                print("Emoción no válida")
-        else:
-            print("Dataset de validación no encontrado")
-    
-    else:
-        print("Opción no válida")
+                print("Opción no válida. Intenta de nuevo.")
+                
+        except KeyboardInterrupt:
+            print("\n\n¡Hasta luego!")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
 
 
 if __name__ == "__main__":

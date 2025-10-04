@@ -38,3 +38,27 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 FACE_CASCADE_PATH = "haarcascade_frontalface_default.xml"
 DEFAULT_SCALE_FACTOR = 1.1
 DEFAULT_MIN_NEIGHBORS = 6
+
+# Mapeo de AffectNet a nuestro modelo
+AFFECTNET_CLASSES = {
+    0: "Anger",
+    1: "Disgust", 
+    2: "Fear",
+    3: "Happy",
+    4: "Sad",
+    5: "Surprise",
+    6: "Neutral",
+    7: "Contempt"
+}
+
+AFFECTNET_TO_YOUR_MODEL = {
+    # AffectNet ID: Tu Modelo ID
+    3: 0,  # Happy -> alegria
+    1: 1,  # Disgust -> disgusto
+    0: 2,  # Anger -> enojo
+    2: 3,  # Fear -> miedo
+    6: 4,  # Neutral -> seriedad
+    5: 5,  # Surprise -> sorpresa
+    4: 6,  # Sad -> tristeza
+    7: None  # Contempt -> EXCLUIR
+}
