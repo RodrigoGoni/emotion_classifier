@@ -1,0 +1,177 @@
+{
+  "experiment_id": "972829483919227782",
+  "config_hash": "6f425510",
+  "timestamp": "20251005_210626",
+  "description": "Entrenamiento CNN_Custom con 100 épocas",
+  "config": {
+    "version_control": {
+      "project_name": "emotion_classifier",
+      "version": "1.0.0",
+      "experiment_name": "emotion_classification_v1",
+      "description": "Clasificador de emociones faciales con CNN personalizada",
+      "author": "Rodrigo Goni",
+      "tags": [
+        "deep_learning",
+        "emotion_recognition",
+        "computer_vision"
+      ]
+    },
+    "data": {
+      "raw_data_path": "data/raw/dataset_emociones",
+      "processed_path": "data/processed",
+      "train_path": "data/processed/train",
+      "val_path": "data/processed/val",
+      "test_path": "data/test_images",
+      "affectnet_test_path": "data/test_affectnet",
+      "image_size": 100,
+      "channels": 3,
+      "balance_dataset": true,
+      "target_samples_per_class": 3000,
+      "validation_split": 0.2,
+      "random_seed": 42,
+      "augmentation": {
+        "horizontal_flip": 0.5,
+        "rotation_range": 15,
+        "brightness_factor": 0.2,
+        "contrast_factor": 0.2,
+        "normalize_imagenet": true
+      }
+    },
+    "model": {
+      "architecture": "CNN_Custom",
+      "num_classes": 7,
+      "dropout_prob": 0.5,
+      "input_channels": 3,
+      "conv_layers": [
+        {
+          "filters": 64,
+          "kernel": 3,
+          "pool": 2
+        },
+        {
+          "filters": 128,
+          "kernel": 3,
+          "pool": 2
+        },
+        {
+          "filters": 256,
+          "kernel": 3,
+          "pool": 2
+        },
+        {
+          "filters": 512,
+          "kernel": 3,
+          "pool": 2
+        }
+      ],
+      "fc_layers": [
+        1024,
+        512
+      ]
+    },
+    "training": {
+      "batch_size": 32,
+      "learning_rate": 0.001,
+      "weight_decay": 0.0001,
+      "num_epochs": 100,
+      "scheduler": {
+        "type": "StepLR",
+        "step_size": 15,
+        "gamma": 0.5
+      },
+      "early_stopping": {
+        "enabled": true,
+        "patience": 10,
+        "min_delta": 0.001,
+        "restore_best_weights": true
+      },
+      "optimizer": {
+        "type": "Adam",
+        "beta1": 0.9,
+        "beta2": 0.999,
+        "eps": "1e-8"
+      },
+      "criterion": "CrossEntropyLoss",
+      "device": "auto",
+      "num_workers": 4,
+      "pin_memory": true
+    },
+    "evaluation": {
+      "metrics": [
+        "accuracy",
+        "precision",
+        "recall",
+        "f1_score",
+        "confusion_matrix"
+      ],
+      "test_datasets": [
+        "affectnet",
+        "custom_test"
+      ],
+      "save_predictions": true,
+      "save_misclassified": true
+    },
+    "tracking": {
+      "mlflow_uri": "file:./mlruns",
+      "log_model": true,
+      "log_artifacts": true,
+      "log_params": true,
+      "log_metrics": true,
+      "auto_log": false,
+      "metrics_to_log": [
+        "train_loss",
+        "val_loss",
+        "val_accuracy",
+        "learning_rate",
+        "epoch_time"
+      ]
+    },
+    "output": {
+      "models_dir": "models/trained",
+      "results_dir": "results",
+      "plots_dir": "results/plots",
+      "logs_dir": "logs",
+      "model_name_format": "{architecture}_v{version}_{timestamp}",
+      "experiment_name_format": "{project_name}_exp_{timestamp}"
+    },
+    "inference": {
+      "face_detection": {
+        "cascade_path": "haarcascade_frontalface_default.xml",
+        "scale_factor": 1.1,
+        "min_neighbors": 6,
+        "min_size": [
+          30,
+          30
+        ]
+      },
+      "confidence_threshold": 0.7,
+      "batch_size": 16
+    },
+    "logging": {
+      "level": "INFO",
+      "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+      "file_handler": true,
+      "console_handler": true
+    },
+    "class_mappings": {
+      "internal_classes": {
+        "0": "alegria",
+        "1": "disgusto",
+        "2": "enojo",
+        "3": "miedo",
+        "4": "seriedad",
+        "5": "sorpresa",
+        "6": "tristeza"
+      },
+      "affectnet_mapping": {
+        "3": 0,
+        "1": 1,
+        "0": 2,
+        "2": 3,
+        "6": 4,
+        "5": 5,
+        "4": 6
+      }
+    }
+  }
+}
