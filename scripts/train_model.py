@@ -9,6 +9,8 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import mlflow
 import mlflow.pytorch
+import matplotlib.pyplot as plt
+import numpy as np
 from pathlib import Path
 
 # Añadir src al path
@@ -20,6 +22,58 @@ from src.models.cnn_model import CNNModel
 from src.training.train import Trainner
 from src.utils.constants import NUM_CLASSES
 from src.utils.config_manager import ConfigManager
+
+
+def plot_training_metrics(train_losses, val_losses, train_accuracies, val_accuracies, 
+                         train_f1s, val_f1s, results_dir):
+    """Genera gráficos de evolución de métricas durante el entrenamiento"""
+    epochs = range(1, len(train_losses) + 1)
+    
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    
+    # Loss
+    axes[0, 0].plot(epochs, train_losses, 'b-', label='Train')
+    axes[0, 0].plot(epochs, val_losses, 'r-', label='Validation')
+    axes[0, 0].set_title('Loss Evolution')
+    axes[0, 0].set_xlabel('Epoch')
+    axes[0, 0].set_ylabel('Loss')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True)
+    
+    # Accuracy
+    axes[0, 1].plot(epochs, train_accuracies, 'b-', label='Train')
+    axes[0, 1].plot(epochs, val_accuracies, 'r-', label='Validation')
+    axes[0, 1].set_title('Accuracy Evolution')
+    axes[0, 1].set_xlabel('Epoch')
+    axes[0, 1].set_ylabel('Accuracy')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True)
+    
+    # F1 Score
+    axes[1, 0].plot(epochs, train_f1s, 'b-', label='Train')
+    axes[1, 0].plot(epochs, val_f1s, 'r-', label='Validation')
+    axes[1, 0].set_title('F1 Score Evolution')
+    axes[1, 0].set_xlabel('Epoch')
+    axes[1, 0].set_ylabel('F1 Score')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True)
+    
+    # Comparación de métricas de validación
+    axes[1, 1].plot(epochs, val_accuracies, 'g-', label='Accuracy')
+    axes[1, 1].plot(epochs, val_f1s, 'orange', label='F1 Score')
+    axes[1, 1].set_title('Validation Metrics Comparison')
+    axes[1, 1].set_xlabel('Epoch')
+    axes[1, 1].set_ylabel('Score')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True)
+    
+    plt.tight_layout()
+    plot_path = results_dir / 'training_metrics.png'
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Gráficos de entrenamiento guardados en: {plot_path}")
+    return plot_path
 
 
 class EarlyStopping:
@@ -140,7 +194,7 @@ def train_model(config_manager: ConfigManager):
             lr=training_config['learning_rate'],
             weight_decay=training_config['weight_decay'],
             betas=(optimizer_config.get('beta1', 0.9), optimizer_config.get('beta2', 0.999)),
-            eps=optimizer_config.get('eps', 1e-8)
+            eps=float(optimizer_config.get('eps', 1e-8))
         )
     else:
         optimizer = optim.Adam(model.parameters(), lr=training_config['learning_rate'])
@@ -173,14 +227,30 @@ def train_model(config_manager: ConfigManager):
     best_val_acc = 0.0
     best_model_path = None
     
+    # Listas para métricas históricas
+    train_losses = []
+    val_losses = []
+    train_accuracies = []
+    val_accuracies = []
+    train_f1s = []
+    val_f1s = []
+    
     print("Iniciando entrenamiento...")
     
     for epoch in range(training_config['num_epochs']):
         # Train
-        train_loss = trainer.train_epoch()
+        train_loss, train_acc, train_f1 = trainer.train_epoch()
         
         # Validate
-        val_loss, val_acc = trainer.validate_epoch()
+        val_loss, val_acc, val_f1 = trainer.validate_epoch()
+        
+        # Guardar métricas
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
+        train_accuracies.append(train_acc)
+        val_accuracies.append(val_acc)
+        train_f1s.append(train_f1)
+        val_f1s.append(val_f1)
         
         # Scheduler step
         scheduler.step()
@@ -190,7 +260,10 @@ def train_model(config_manager: ConfigManager):
         metrics = {
             'train_loss': train_loss,
             'val_loss': val_loss,
+            'train_accuracy': train_acc,
             'val_accuracy': val_acc,
+            'train_f1': train_f1,
+            'val_f1': val_f1,
             'learning_rate': current_lr,
             'epoch': epoch + 1
         }
@@ -218,8 +291,12 @@ def train_model(config_manager: ConfigManager):
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
-                'val_acc': val_acc,
-                'val_loss': val_loss,
+                'val_acc': float(val_acc),
+                'val_loss': float(val_loss),
+                'val_f1': float(val_f1),
+                'train_acc': float(train_acc),
+                'train_loss': float(train_loss),
+                'train_f1': float(train_f1),
                 'config_hash': config_hash,
                 'experiment_id': experiment_id,
                 'run_id': run_id,
@@ -236,14 +313,29 @@ def train_model(config_manager: ConfigManager):
             print(f"Early stopping activado en época {epoch+1}")
             break
     
-    # Log del mejor modelo y métricas finales
+    # Log del mejor modelo y métricas finales  
+    best_val_f1 = 0.0
+    if val_f1s:
+        # Encontrar el F1 correspondiente al mejor accuracy
+        best_acc_idx = None
+        for i, acc in enumerate(val_accuracies):
+            if acc == best_val_acc:
+                best_acc_idx = i
+                break
+        if best_acc_idx is not None:
+            best_val_f1 = val_f1s[best_acc_idx]
+    
+    # Final metrics - solo valores numéricos para MLflow
     final_metrics = {
-        'best_val_accuracy': best_val_acc,
-        'total_epochs_trained': epoch + 1,
-        'config_hash': config_hash
+        'best_val_accuracy': float(best_val_acc),
+        'best_val_f1': float(best_val_f1),
+        'total_epochs_trained': epoch + 1
     }
     
     mlflow.log_metrics(final_metrics)
+    
+    # Log del config_hash como tag, no como métrica
+    mlflow.set_tag('config_hash', config_hash)
     
     # Log del modelo en MLflow
     tracking_config = config_manager.get_config('tracking')
@@ -257,6 +349,11 @@ def train_model(config_manager: ConfigManager):
         str(best_model_path),
         {"total_parameters": sum(p.numel() for p in model.parameters())}
     )
+    
+    # Generar gráficos de entrenamiento
+    results_dir = config_manager.get_results_dir()
+    plot_training_metrics(train_losses, val_losses, train_accuracies, val_accuracies,
+                         train_f1s, val_f1s, results_dir)
     
     print(f"Entrenamiento completado!")
     print(f"Mejor accuracy de validación: {best_val_acc:.4f}")

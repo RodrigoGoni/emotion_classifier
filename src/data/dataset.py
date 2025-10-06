@@ -80,17 +80,22 @@ class EmotionDataset(ImageFolder):
         print(f"  Height: {dims['avg_height']}px")
         print(f"  Samples analyzed: {dims['samples_analyzed']}")
         
-    def plot_histogram(self):
+    def plot_histogram(self, save_path=None):
         """Genera un histograma de la distribución de clases"""
         
         class_counts = self.get_class_counts()
         classes = list(class_counts.keys())
         counts = list(class_counts.values())
         
-        # Crear directorio results/plots
-        plot_path = Path('results/plots')
-        plot_path.mkdir(parents=True, exist_ok=True)
-        figure_path = plot_path / 'class_distribution.png'
+        # Usar save_path si se proporciona, sino usar directorio por defecto
+        if save_path:
+            plot_path = Path(save_path)
+            plot_path.mkdir(parents=True, exist_ok=True)
+            figure_path = plot_path / 'class_distribution.png'
+        else:
+            plot_path = Path('results/plots')
+            plot_path.mkdir(parents=True, exist_ok=True)
+            figure_path = plot_path / 'class_distribution.png'
         
         plt.figure(figsize=(10, 6))
         plt.bar(classes, counts, color='skyblue')
@@ -104,7 +109,7 @@ class EmotionDataset(ImageFolder):
         
         print(f"Histograma guardado en: {figure_path}")
         
-    def plot_sample_images(self, num_images=9):
+    def plot_sample_images(self, num_images=9, save_path=None):
         """Muestra algunas imágenes de ejemplo del dataset"""
         if num_images <= 0:
             print("Número de imágenes debe ser mayor que 0")
@@ -131,10 +136,15 @@ class EmotionDataset(ImageFolder):
         
         plt.tight_layout()
         
-        # Crear directorio results/plots
-        plot_path = Path('results/plots')
-        plot_path.mkdir(parents=True, exist_ok=True)
-        figure_path = plot_path / 'sample_images.png'
+        # Usar save_path si se proporciona, sino usar directorio por defecto
+        if save_path:
+            plot_path = Path(save_path)
+            plot_path.mkdir(parents=True, exist_ok=True)
+            figure_path = plot_path / 'sample_images.png'
+        else:
+            plot_path = Path('results/plots')
+            plot_path.mkdir(parents=True, exist_ok=True)
+            figure_path = plot_path / 'sample_images.png'
         
         plt.savefig(figure_path)
         plt.close()

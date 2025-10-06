@@ -19,7 +19,7 @@ class Evaluator:
     @staticmethod
     def load_model(model_path, device):
         """Cargar modelo entrenado desde checkpoint"""
-        checkpoint = torch.load(model_path, map_location=device)
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
         
         model = CNNModel(
             num_classes=NUM_CLASSES,
