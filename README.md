@@ -51,29 +51,43 @@ notebooks/         # Jupyter notebooks
 scripts/           # Scripts ejecutables
 ```
 
-## Emociones
+1. Transformaciones y Desbalanceo del Dataset
+Las transformaciones se realizaron con la versión dos de la librería torchvision. En este caso, se debe tener especial cuidado con el tipo de transformaciones aplicadas, ya que al clasificar emociones, no se pueden utilizar modificaciones drásticas que alteren la forma o posición de la cara, puesto que esto podría cambiar la expresión en sí misma.
 
-angry, disgust, fear, happy, neutral, sad, surprise
-Respuestas
-1 las tranformaciones se hiceron con la version dos de la libreria de torchvision, primero hay que tener mucho cuidado con el tipo de trasformaciones que se ahcen en este caso porque al tener que clasificar emociones no se puede ser muy drastico con transformaciones que modifique la dorma o la posicion de la cara por que esto puede modificar la expresion en si misma.
-Despues se eligio unas transformaciones suabes en cuento a movimiento de la imagen y un poco mas intensar (aumentando la probabilidad p de qeu se aplique) en las que blurean o agregan ruido a la imagen
-Lo que se puede obserbar es que hay un desvalance demasiado grande en el dataset esto siempre degrada la performance del modelo y no solo en las clases que tienen pocas cantidad de daros si no tambien en las que estan sobre muestreadas, entre la clase que mastiene felicidad y la que menos tiene miedo hay apoximadamente un *20, esto en la evalucacion con los datos de calidacion del datast no se ve reflejado en los resultado pero descargue un dataset mucho mas rico y grande para testear que se llama affecnet y hay clara evidencia del desvalanceo en la primeras iteraciones de entrenamiento tenia un resultado de de 85 en felicidad y 20 en miedo 
-2.
-LA eleccion del modelo queira que fuese sencillo para entenerlo yo y poder trasmitirlo a ustede en un oirmer momento pense en usar una arquitectura resnet o recidual network pero creo que iba a compejisar mucho el problema y no estaba 100seguro si iba aportar una mejoria realmente notable lo que seguramente aprotaria una mejora notable en este tipod de problemas es capas de atencion ya que necesitamos detectar caracteriticas de la cara y para ello debermos prestarle atencion a ciertas partes del rostro, de nuevo esto compejisa mucho el tp, y no aunque yo en mi maquina puedo entrenar la red no estoy seguro si podria correr este modelo en google colab.
-Bloques Convolucionales
-Por lo que decidi basarme en lo que vimos en clase y utiliza una arquitectura tipica de CNN, con algunas caracteristicas sutiles pero importantes para esta tarea fui aumentando la cantidad de filtro desde el primcipo al final de la red (32 → 64 → 128 → 256) por que me parece que tenemos que encontrar carcteristicas mas puntuales para esta tarea, las capas finales de la red aprenden caracteristicas puntuales mientras las primeras caracteriscticas generales 
-La dimension de los kernels tambien tiene detalles que por ahi se pasan use 3*3 esto tiene justificacion en lo que se llama campo reseptivo efectivo de la red 
-estp es algo como lo que voy a explicar por ejemplo si me hubiera decidido por kernels de 5*5 si aplcio una capa de conv con ese kernel tiene el mismo efecto que aplicar dos veces un kernel de 3*3 pero tiene la desventaja que con una sola aplicacion pierdo la posibilida de tener dos capas de no linealidad osea capturo menos carcateristicas no lineales y tiene mas parametro 25 el kernel de 5*5 y 18 en los dos kernels de 3*3 y bueno siempre un kernel mas chico vas a poder ver carateristicas ricas y mas contexto de la imagen
-en el pading no hay nado demaciado especial muy standar
-el max pol solo para reducir la complejidad comp (reduce en la mitad la dimencion original) y tambien la hace robusta para pequenas traslaciones de las caracteriticas 
-Bloque Clasificador (backbone)
-aqui estan los famosos backbine de las redes CNN 
-simple una fulluconected de 512 neuronas conectados a la salida de 7 neurona
-le agrege un dropout para evitar el overfiting 
-esta parte es la encargada una vez extraida las caracteristicas en clasificarlas en las emociones de salida 
-en cuanto a las no linealidades nada muy extraordinario use ReLU simplemente es mas eficiente y lo mas estandar, podria aclarar que es un poco mas eficiente para entrenar las capas de entrada porque su derivada no sufre de poblemas de saturacion en los extremos pero no cero que sea tan importante. 
-Otra cosa tal vez importante es la capa de salida que es una nn.CrossEntropyLoss implisitamente una Softmax que basicamente hace que la suma de las probavilidades de la salida de 1 es lo estandar en clasificacion multi clase 
-Bueno para las demas parte del entrenamiento no creo que valga la pena aclarar mas cosa por que utilice cosas muy standars como un algoritmo adam con un lr de 1e-3 que es lo recomendado 
-LA cantidad de capas oculyas 4 me parecieron bien y estandar 
-4. el test que propuse fue samplear 100 casos del dataset affectnet y matchearlo con nuestaras clases para poder validar la performance del modelo . desarrolle un test para esto y evaluar las metricas propuestas por el tp
-Como conclucion un poco las mensione en 1 el dataset affecnet prensta muy mala performace en la calses desvalnceadas como solucion yo propuse una aumentacion dle dataset y un balanceo , para el dataset que propuso la catedra considero que el modelo anda satisfactoriamente 8/10 podria mejorarce con las tecnicas que propuse en el punto 1 un extarctor de caracteristicas mas complejo con cpas de atenccion y un clasificador mejor con atencion tambien podria ser (la cantidad de hiperparametros crece muchismo)
+Por ello, se optó por transformaciones suaves en cuanto al movimiento de la imagen y algunas más intensas (aumentando la probabilidad p de su aplicación) enfocadas en desenfoque (blur) o adición de ruido.
+
+Se observó un desbalanceo significativo en el dataset, lo cual siempre degrada el rendimiento del modelo, afectando no solo a las clases con pocos datos, sino también a las sobremuestreadas. Existe una proporción aproximada de 20 a 1 entre la clase más frecuente (felicidad) y la menos frecuente (miedo). Aunque esto no se vio reflejado en los resultados con los datos de validación del dataset original, al evaluar con un dataset más grande y rico (AffecNet), la evidencia del desbalanceo fue clara. En las primeras iteraciones de entrenamiento con AffecNet, se obtuvo un resultado de 85% en felicidad y 20% en miedo.
+
+2. Elección y Arquitectura del Modelo
+La elección del modelo se basó en la sencillez para su comprensión y posterior explicación. Inicialmente, se consideró una arquitectura ResNet (Residual Network), pero se pensó que complejizaría demasiado el problema sin garantizar una mejora notable. Una mejora significativa para este tipo de tareas sería la inclusión de Capas de Atención (Attention Layers), ya que se requiere detectar características faciales específicas, prestando atención a ciertas partes del rostro. No obstante, esto incrementaba la complejidad del trabajo y había dudas sobre si podría ejecutarse eficientemente en Google Colab.
+
+Bloques Convolucionales (CNN)
+Se decidió basar la arquitectura en una Red Neuronal Convolucional (CNN) típica, siguiendo lo visto en clase, con algunas características sutiles pero importantes:
+
+Aumento de Filtros: Se incrementó la cantidad de filtros desde el principio hasta el final de la red (32→64→128→256). Esto se debe a que las capas finales aprenden características puntuales, mientras que las primeras aprenden características generales, y para la tarea de clasificación de emociones, se necesitan características más específicas.
+
+Tamaño del Kernel: Se usaron kernels de 3×3 basándose en el concepto de Campo Receptivo Efectivo. Aplicar un solo kernel de 5×5 tiene un efecto similar al de aplicar dos veces un kernel de 3×3. Sin embargo, el kernel más pequeño tiene la ventaja de permitir dos capas de no linealidad, capturando más características no lineales, además de tener menos parámetros (18 en los dos kernels de 3×3 frente a 25 en el de 5×5). Un kernel más pequeño puede capturar características ricas y más contexto de la imagen.
+
+Padding y Max Pooling: El padding es estándar. Se utiliza Max Pooling únicamente para reducir la complejidad computacional (reduce la dimensión original a la mitad) y para hacer la red más robusta a pequeñas traslaciones de las características.
+
+Bloque Clasificador (Backbone)
+Esta parte utiliza el backbone de las redes CNN:
+
+Una capa Totalmente Conectada (Fully Connected) de 512 neuronas, conectada a la capa de salida de 7 neuronas (correspondiente al número de emociones).
+
+Se agregó Dropout para prevenir el sobreajuste (overfitting).
+
+Esta sección es la encargada de clasificar las características extraídas en las emociones de salida.
+
+Funciones de Activación y Pérdida
+No Linealidades: Se usó ReLU por su eficiencia y ser la opción más estándar. Es más eficiente para entrenar las capas de entrada, ya que su derivada no sufre problemas de saturación en los extremos.
+
+Capa de Salida: Se utilizó nn.CrossEntropyLoss, que implícitamente incluye una Softmax. Esto es el estándar en clasificación multiclase y asegura que la suma de las probabilidades de salida sea 1.
+
+Entrenamiento
+Para el resto de las partes del entrenamiento, se usaron configuraciones estándar, como el algoritmo Adam con una tasa de aprendizaje (lr) de 1e-3. Se emplearon cuatro capas ocultas, consideradas una cantidad adecuada y estándar.
+
+4. Prueba y Conclusiones
+La prueba propuesta consistió en muestrear 100 casos del dataset AffecNet y mapearlos con nuestras clases para validar el rendimiento del modelo, evaluando las métricas requeridas.
+
+Conclusión: Como se mencionó en el punto 1, el dataset AffecNet mostró un rendimiento deficiente en las clases desbalanceadas. Como solución, se propone un aumento y balanceo del dataset. Para el dataset provisto por la cátedra, se considera que el modelo tiene un rendimiento satisfactorio (8/10), aunque podría mejorarse con las técnicas antes mencionadas: un extractor de características más complejo, posiblemente con capas de atención, y un clasificador mejorado que también incorpore atención, a pesar de que esto incrementaría considerablemente la cantidad de hiperparámetros.
