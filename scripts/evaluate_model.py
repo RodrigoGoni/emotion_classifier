@@ -2,6 +2,7 @@
 import os
 import sys
 import torch
+import argparse
 from torch.utils.data import DataLoader
 from pathlib import Path
 
@@ -15,10 +16,37 @@ from src.utils.config_manager import ConfigManager
 
 def main():
     """Función principal simplificada"""
+    parser = argparse.ArgumentParser(description="Evaluador de modelo de emociones")
+    parser.add_argument('--experiment-id', type=str, help='ID del experimento a reutilizar')
+    parser.add_argument('--config-hash', type=str, help='Hash de configuración a reutilizar')
+    args = parser.parse_args()
+    
     print("=== EVALUADOR DE MODELO ===")
     
     try:
-        config_manager = ConfigManager()
+        # Verificar si se quiere reutilizar un experimento existente
+        if args.experiment_id and args.config_hash:
+            print(f"Reutilizando experimento: {args.experiment_id} ({args.config_hash})")
+            config_manager = ConfigManager(
+                experiment_id=args.experiment_id,
+                config_hash=args.config_hash
+            )
+        elif not args.experiment_id and not args.config_hash:
+            # Intentar encontrar el experimento más reciente
+            latest_experiment = ConfigManager.find_latest_experiment()
+            if latest_experiment:
+                print(f"Usando experimento más reciente: {latest_experiment['experiment_id']} ({latest_experiment['config_hash']})")
+                config_manager = ConfigManager(
+                    experiment_id=latest_experiment['experiment_id'],
+                    config_hash=latest_experiment['config_hash']
+                )
+            else:
+                print("No se encontraron experimentos previos, creando nuevo...")
+                config_manager = ConfigManager()
+        else:
+            print("Error: Debe proporcionar tanto --experiment-id como --config-hash")
+            return None
+        
         print("ConfigManager inicializado")
         
         # Configurar device

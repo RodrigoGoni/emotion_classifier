@@ -179,10 +179,19 @@ def train_model(config_manager: ConfigManager):
         num_classes=NUM_CLASSES,
         input_size=(data_config['image_size'], data_config['image_size']),
         num_channels=data_config['channels'],
-        dropout_prob=model_config['dropout_prob']
+        dropout_prob=model_config['dropout_prob'],
+        conv_layers=model_config.get('conv_layers'),
+        fc_layers=model_config.get('fc_layers')
     ).to(device)
     
     print(f"Modelo {model_config['architecture']} creado con {NUM_CLASSES} clases")
+    
+    # Mostrar información del modelo
+    model_info = model.get_model_info()
+    print(f"Parámetros totales: {model_info['total_parameters']:,}")
+    print(f"Parámetros entrenables: {model_info['trainable_parameters']:,}")
+    print(f"Capas convolucionales: {len(model_info['conv_layers'])}")
+    print(f"Capas fully connected: {len(model_info['fc_layers'])}")
     
     # Criterio y optimizador
     criterion = nn.CrossEntropyLoss()
@@ -273,6 +282,18 @@ def train_model(config_manager: ConfigManager):
         if tracking_config.get('log_metrics', True):
             mlflow.log_metrics(metrics, step=epoch)
         
+        # Agregar métricas al trainer para CSV
+        trainer.add_metrics(
+            epoch=epoch + 1,
+            train_loss=train_loss,
+            train_acc=train_acc, 
+            train_f1=train_f1,
+            val_loss=val_loss,
+            val_acc=val_acc,
+            val_f1=val_f1,
+            learning_rate=current_lr
+        )
+        
         print(f"Epoch {epoch+1}/{training_config['num_epochs']}: "
               f"Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}, "
               f"Val Acc={val_acc:.4f}, LR={current_lr:.6f}")
@@ -354,6 +375,11 @@ def train_model(config_manager: ConfigManager):
     results_dir = config_manager.get_results_dir()
     plot_training_metrics(train_losses, val_losses, train_accuracies, val_accuracies,
                          train_f1s, val_f1s, results_dir)
+    
+    # Guardar métricas en CSV
+    csv_path = trainer.save_metrics_to_csv(results_dir)
+    if csv_path and tracking_config.get('log_artifacts', True):
+        mlflow.log_artifact(str(csv_path), "metrics")
     
     print(f"Entrenamiento completado!")
     print(f"Mejor accuracy de validación: {best_val_acc:.4f}")

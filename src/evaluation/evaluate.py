@@ -3,6 +3,7 @@ Módulo de evaluación para modelos entrenados
 """
 import torch
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import cv2
@@ -27,15 +28,50 @@ class Evaluator:
     
     @staticmethod
     def load_model(model_path, device):
-        """Cargar modelo entrenado desde checkpoint"""
         checkpoint = torch.load(model_path, map_location=device, weights_only=False)
         
-        model = CNNModel(
-            num_classes=NUM_CLASSES,
-            input_size=(IMAGE_SIZE, IMAGE_SIZE),
-            num_channels=CHANNELS,
-            dropout_prob=0.5
-        )
+        if 'model_config' in checkpoint:
+            model_config = checkpoint['model_config']
+            conv_layers = model_config.get('conv_layers')
+            fc_layers = model_config.get('fc_layers') 
+            dropout_prob = model_config.get('dropout_prob', 0.5)
+            
+            if conv_layers is None:
+                conv_layers = [
+                    {'filters': 64, 'kernel': 3, 'pool': 2},
+                    {'filters': 128, 'kernel': 3, 'pool': 2},
+                    {'filters': 256, 'kernel': 3, 'pool': 2},
+                    {'filters': 512, 'kernel': 3, 'pool': 2}
+                ]
+            
+            if fc_layers is None:
+                state_dict = checkpoint['model_state_dict']
+                fc_layers = []
+                classifier_layers = {}
+                for name, tensor in state_dict.items():
+                    if 'classifier' in name and 'weight' in name:
+                        layer_num = int(name.split('.')[1])
+                        classifier_layers[layer_num] = tensor.shape
+                
+                sorted_layers = sorted(classifier_layers.items())
+                for i, (layer_num, shape) in enumerate(sorted_layers[:-1]):
+                    fc_layers.append(shape[0])
+            
+            model = CNNModel(
+                num_classes=NUM_CLASSES,
+                input_size=(IMAGE_SIZE, IMAGE_SIZE),
+                num_channels=CHANNELS,
+                dropout_prob=dropout_prob,
+                conv_layers=conv_layers,
+                fc_layers=fc_layers
+            )
+        else:
+            model = CNNModel(
+                num_classes=NUM_CLASSES,
+                input_size=(IMAGE_SIZE, IMAGE_SIZE),
+                num_channels=CHANNELS,
+                dropout_prob=0.5
+            )
         
         model.load_state_dict(checkpoint['model_state_dict'])
         model.to(device)
@@ -527,4 +563,33 @@ class Evaluator:
         with open(results_json_path, 'w', encoding='utf-8') as f:
             json.dump(evaluation_data_clean, f, indent=2, ensure_ascii=False)
         
+        # Guardar métricas en CSV
+        csv_path = self.save_evaluation_metrics_to_csv(results_dir, overall_accuracy, f1_weighted, f1_macro, f1_per_class, class_accuracies, class_names)
+        
         return report_path, results_json_path
+    
+    def save_evaluation_metrics_to_csv(self, results_dir, overall_accuracy, f1_weighted, f1_macro, f1_per_class, class_accuracies, class_names, filename="evaluation_metrics.csv"):
+        """Guarda las métricas de evaluación en un archivo CSV"""
+        metrics_data = []
+        
+        # Métricas generales
+        metrics_data.append({'metric_type': 'overall', 'metric_name': 'accuracy', 'value': overall_accuracy, 'class': 'all'})
+        metrics_data.append({'metric_type': 'overall', 'metric_name': 'f1_weighted', 'value': f1_weighted, 'class': 'all'})
+        metrics_data.append({'metric_type': 'overall', 'metric_name': 'f1_macro', 'value': f1_macro, 'class': 'all'})
+        
+        # Métricas por clase
+        for i, class_name in enumerate(class_names):
+            emotion_key = EMOTION_CLASSES[i]
+            class_acc = class_accuracies.get(emotion_key, 0.0)
+            class_f1 = f1_per_class[i]
+            
+            metrics_data.append({'metric_type': 'per_class', 'metric_name': 'accuracy', 'value': class_acc, 'class': class_name})
+            metrics_data.append({'metric_type': 'per_class', 'metric_name': 'f1_score', 'value': class_f1, 'class': class_name})
+        
+        # Crear y guardar CSV
+        df = pd.DataFrame(metrics_data)
+        csv_path = results_dir / filename
+        df.to_csv(csv_path, index=False, float_format='%.6f')
+        
+        print(f"Métricas de evaluación guardadas en: {csv_path}")
+        return csv_path

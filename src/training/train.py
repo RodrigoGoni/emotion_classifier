@@ -3,6 +3,8 @@ Script de entrenamiento principal
 """
 import torch
 import numpy as np
+import pandas as pd
+from pathlib import Path
 from sklearn.metrics import f1_score
 
 class Trainner():
@@ -13,6 +15,64 @@ class Trainner():
         self.criterion = criterion
         self.optimizer = optimizer
         self.device = device
+        
+        # Para tracking de métricas
+        self.metrics_history = []
+
+    def save_metrics_to_csv(self, results_dir: Path, filename: str = "training_metrics.csv"):
+        """
+        Guarda las métricas de entrenamiento en un archivo CSV
+        
+        Args:
+            results_dir: Directorio donde guardar el archivo
+            filename: Nombre del archivo CSV
+        """
+        if not self.metrics_history:
+            print("No hay métricas para guardar")
+            return None
+            
+        # Crear DataFrame con las métricas
+        df = pd.DataFrame(self.metrics_history)
+        
+        # Asegurar que el directorio existe
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Guardar archivo CSV
+        csv_path = results_dir / filename
+        df.to_csv(csv_path, index=False, float_format='%.6f')
+        
+        print(f"Métricas guardadas en: {csv_path}")
+        return csv_path
+    
+    def add_metrics(self, epoch: int, train_loss: float, train_acc: float, train_f1: float,
+                   val_loss: float, val_acc: float, val_f1: float, learning_rate: float = None):
+        """
+        Añade métricas de una época al historial
+        
+        Args:
+            epoch: Número de época
+            train_loss: Loss de entrenamiento
+            train_acc: Accuracy de entrenamiento  
+            train_f1: F1 score de entrenamiento
+            val_loss: Loss de validación
+            val_acc: Accuracy de validación
+            val_f1: F1 score de validación
+            learning_rate: Learning rate actual (opcional)
+        """
+        metrics = {
+            'epoch': epoch,
+            'train_loss': train_loss,
+            'train_accuracy': train_acc,
+            'train_f1': train_f1,
+            'val_loss': val_loss,
+            'val_accuracy': val_acc,
+            'val_f1': val_f1
+        }
+        
+        if learning_rate is not None:
+            metrics['learning_rate'] = learning_rate
+            
+        self.metrics_history.append(metrics)
 
     def train_epoch(self):
         self.model.train()
