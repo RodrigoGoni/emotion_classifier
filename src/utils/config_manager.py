@@ -14,41 +14,78 @@ import mlflow
 class ConfigManager:
     """Gestor centralizado de configuraciones y versionado"""
     
-    def __init__(self, config_path: str = "config/config.yaml"):
+    def __init__(self, config_path: str = "config/config.yaml", 
+                 experiment_id: str = None, config_hash: str = None):
         """
-        Initialize ConfigManager
+        Inicializar ConfigManager
         
         Args:
-            config_path: Ruta al archivo de configuración principal
+            config_path: Ruta al archivo de configuración
+            experiment_id: ID de experimento existente (opcional)
+            config_hash: Hash de configuración existente (opcional)
         """
         self.config_path = Path(config_path)
         self.config = self._load_config()
-        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.run_id = None
         
+        # Si se proporcionan experiment_id y config_hash, reutilizar experimento existente
+        if experiment_id and config_hash:
+            self.experiment_id = experiment_id
+            self.config_hash = config_hash
+            self.timestamp = self._get_timestamp_from_experiment(experiment_id, config_hash)
+            self.run_id = None
+            print(f"Reutilizando experimento existente: {experiment_id} ({config_hash})")
+        else:
+            # Crear nuevo experimento
+            self.experiment_id = None
+            self.config_hash = None
+            self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.run_id = None
+    
+    def _get_timestamp_from_experiment(self, experiment_id: str, config_hash: str) -> str:
+        """
+        Obtiene el timestamp de un experimento existente
+        
+        Args:
+            experiment_id: ID del experimento
+            config_hash: Hash de la configuración
+            
+        Returns:
+            Timestamp del experimento
+        """
+        try:
+            version_file = Path(f"config/versions/config_{experiment_id}_{config_hash}.json")
+            if version_file.exists():
+                with open(version_file, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                    return metadata.get('timestamp', datetime.now().strftime("%Y%m%d_%H%M%S"))
+            else:
+                print(f"Advertencia: Archivo de configuración no encontrado: {version_file}")
+                return datetime.now().strftime("%Y%m%d_%H%M%S")
+        except Exception as e:
+            print(f"Error al obtener timestamp del experimento: {e}")
+            return datetime.now().strftime("%Y%m%d_%H%M%S")
+    
     def _load_config(self) -> Dict[str, Any]:
         """Carga la configuración desde el archivo YAML"""
         if not self.config_path.exists():
             raise FileNotFoundError(f"Archivo de configuración no encontrado: {self.config_path}")
             
         with open(self.config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
-            
-        return config
+            return yaml.safe_load(f)
     
     def get_config(self, section: Optional[str] = None) -> Dict[str, Any]:
         """
-        Obtiene la configuración completa o una sección específica
+        Obtiene una sección específica de la configuración
         
         Args:
-            section: Sección específica a obtener (ej: 'training', 'model')
+            section: Nombre de la sección (opcional)
             
         Returns:
-            Diccionario con la configuración
+            Configuración completa o sección específica
         """
         if section:
             return self.config.get(section, {})
-        return self.config.copy()
+        return self.config
     
     def update_config(self, section: str, updates: Dict[str, Any]) -> None:
         """
@@ -56,7 +93,7 @@ class ConfigManager:
         
         Args:
             section: Sección a actualizar
-            updates: Diccionario con las actualizaciones
+            updates: Nuevos valores
         """
         if section not in self.config:
             self.config[section] = {}
@@ -74,6 +111,10 @@ class ConfigManager:
         Returns:
             Hash de la configuración para versionado
         """
+        # Si ya tenemos un config_hash, lo reutilizamos
+        if self.config_hash:
+            return self.config_hash
+            
         # Crear hash de la configuración
         config_str = json.dumps(self.config, sort_keys=True)
         config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
@@ -81,6 +122,13 @@ class ConfigManager:
         # Crear directorio de versiones
         versions_dir = Path("config/versions")
         versions_dir.mkdir(exist_ok=True)
+        
+        # Verificar si ya existe esta configuración
+        version_file = versions_dir / f"config_{experiment_id}_{config_hash}.json"
+        if version_file.exists():
+            print(f"Configuración ya existe: {version_file}")
+            self.config_hash = config_hash
+            return config_hash
         
         # Metadatos de la versión
         version_metadata = {
@@ -92,10 +140,10 @@ class ConfigManager:
         }
         
         # Guardar versión
-        version_file = versions_dir / f"config_{experiment_id}_{config_hash}.json"
         with open(version_file, 'w', encoding='utf-8') as f:
             json.dump(version_metadata, f, indent=2, ensure_ascii=False)
             
+        self.config_hash = config_hash
         return config_hash
     
     def setup_mlflow_experiment(self) -> str:
@@ -105,6 +153,20 @@ class ConfigManager:
         Returns:
             ID del experimento
         """
+        # Si ya tenemos un experiment_id, lo reutilizamos
+        if self.experiment_id:
+            # Configurar MLflow
+            mlflow_config = self.get_config('tracking')
+            mlflow.set_tracking_uri(mlflow_config['mlflow_uri'])
+            
+            # Usar experimento existente
+            experiment_name = self.config['version_control']['experiment_name']
+            experiment_name_with_version = f"{experiment_name}_{self.timestamp}"
+            
+            # Configurar experimento
+            experiment = mlflow.set_experiment(experiment_name_with_version)
+            return self.experiment_id
+        
         # Configurar MLflow
         mlflow_config = self.get_config('tracking')
         mlflow.set_tracking_uri(mlflow_config['mlflow_uri'])
@@ -115,9 +177,9 @@ class ConfigManager:
         
         # Configurar experimento
         experiment = mlflow.set_experiment(experiment_name_with_version)
-        experiment_id = experiment.experiment_id
+        self.experiment_id = experiment.experiment_id
         
-        return experiment_id
+        return self.experiment_id
     
     def start_mlflow_run(self, run_name: Optional[str] = None) -> str:
         """
@@ -189,32 +251,37 @@ class ConfigManager:
     
     def get_model_save_path(self, epoch: Optional[int] = None, is_best: bool = False) -> Path:
         """
-        Genera la ruta para guardar el modelo con versionado
+        Genera la ruta para guardar un modelo
         
         Args:
-            epoch: Época actual (opcional)
+            epoch: Época del modelo (opcional)
             is_best: Si es el mejor modelo
             
         Returns:
-            Ruta donde guardar el modelo
+            Ruta del archivo del modelo
         """
         output_config = self.get_config('output')
         models_dir = Path(output_config['models_dir'])
         models_dir.mkdir(parents=True, exist_ok=True)
         
-        # Crear nombre del modelo
+        # Información del modelo
         version_info = self.get_config('version_control')
         model_config = self.get_config('model')
         
-        base_name = f"{model_config['architecture']}_v{version_info['version']}_{self.timestamp}"
+        # Nombre del archivo
+        filename_parts = [
+            model_config['architecture'],
+            f"v{version_info['version']}",
+            self.timestamp
+        ]
+        
+        if epoch:
+            filename_parts.append(f"epoch{epoch}")
         
         if is_best:
-            filename = f"{base_name}_best.pth"
-        elif epoch is not None:
-            filename = f"{base_name}_epoch_{epoch}.pth"
-        else:
-            filename = f"{base_name}_final.pth"
-            
+            filename_parts.append("best")
+        
+        filename = "_".join(filename_parts) + ".pth"
         return models_dir / filename
     
     def get_results_dir(self, create: bool = True) -> Path:
@@ -254,7 +321,7 @@ class ConfigManager:
             "experiment_info": {
                 "timestamp": self.timestamp,
                 "run_id": self.run_id,
-                "config_hash": hashlib.md5(
+                "config_hash": self.config_hash or hashlib.md5(
                     json.dumps(self.config, sort_keys=True).encode()
                 ).hexdigest()[:8]
             },
@@ -266,7 +333,7 @@ class ConfigManager:
         
         if additional_info:
             summary["additional_info"] = additional_info
-            
+        
         summary_file = results_dir / "experiment_summary.json"
         with open(summary_file, 'w', encoding='utf-8') as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
@@ -315,3 +382,23 @@ class ConfigManager:
                 })
                 
         return sorted(experiments, key=lambda x: x["timestamp"], reverse=True)
+    
+    @staticmethod
+    def find_latest_experiment() -> Optional[Dict[str, str]]:
+        """
+        Encuentra el experimento más reciente
+        
+        Returns:
+            Diccionario con experiment_id y config_hash del último experimento
+        """
+        config_manager = ConfigManager()
+        experiments = config_manager.list_experiments()
+        
+        if experiments:
+            latest = experiments[0]  # Ya están ordenados por timestamp desc
+            return {
+                'experiment_id': latest['experiment_id'],
+                'config_hash': latest['config_hash'],
+                'timestamp': latest['timestamp']
+            }
+        return None
